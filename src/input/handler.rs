@@ -27,6 +27,7 @@ pub enum Action {
     QueueMoveDown,
     QueueRemove,
     AddToQueue,
+    ToggleVisualizer,
     None,
 }
 
@@ -64,6 +65,9 @@ pub fn map_key_event(key: KeyEvent, keybindings: &KeybindingSettings, screen: Ap
     if screen == AppScreen::Main {
         if key.code == KeyCode::Char('a') {
             return Action::AddToQueue;
+        }
+        if key.code == KeyCode::Char('v') {
+            return Action::ToggleVisualizer;
         }
     }
 
@@ -160,6 +164,9 @@ pub fn apply_action(app: &mut App, action: Action) {
         }
         Action::Back => {
             app.screen = AppScreen::Main;
+        }
+        Action::ToggleVisualizer => {
+            app.toggle_visualizer();
         }
         // PlayPause, Next, Previous, Select, Navigate, Favorite, Search
         // are handled by the TUI run loop which has access to more state

@@ -369,6 +369,31 @@ fn main_loop(
     let mut ps = PlayState::new();
 
     while app.running {
+        // Auto-advance: when song finishes and buffer is drained, play next
+        if engine.is_active() && !engine.is_paused() && engine.is_song_finished() {
+            info!("Song finished, auto-advancing");
+            if app.repeat == app::RepeatMode::One {
+                if let Some(song) = ps.current_song.clone() {
+                    play_song(app, engine, &song, &mut ps);
+                    sync_sidebar_selection(app, sidebar_state, &song);
+                }
+            } else if let Some(next_song) = ps.upcoming.pop_front() {
+                if let Some(cur) = ps.current_song.take() {
+                    ps.history.push(cur);
+                }
+                refill_upcoming(app, &mut ps, 1);
+                let song_ref = next_song.clone();
+                play_song(app, engine, &next_song, &mut ps);
+                sync_sidebar_selection(app, sidebar_state, &song_ref);
+            } else {
+                // No more songs — stop
+                engine.stop();
+                app.is_playing = false;
+                ps.current_song = None;
+                ps.playback_start = None;
+            }
+        }
+
         // Grab visualizer samples from the audio engine
         let vis_samples = engine.take_visualizer_samples(4096);
 
@@ -750,12 +775,17 @@ fn draw_ui(
                 Some(song) => {
                     let total_elapsed = playback_start.map(|s| s.elapsed()).unwrap_or(Duration::ZERO);
                     let current_pause = pause_instant.map(|pi| pi.elapsed()).unwrap_or(Duration::ZERO);
-                    let elapsed = total_elapsed.saturating_sub(paused_duration + current_pause).as_secs();
+                    let mut elapsed = total_elapsed.saturating_sub(paused_duration + current_pause).as_secs();
+                    let total = song.duration.unwrap_or(0);
+                    // Cap elapsed at song duration
+                    if total > 0 && elapsed > total {
+                        elapsed = total;
+                    }
                     NowPlayingInfo {
                         title: song.title.clone(),
                         artist: song.artist.clone(),
                         elapsed_secs: elapsed,
-                        total_secs: song.duration.unwrap_or(0),
+                        total_secs: total,
                         is_playing: app.is_playing,
                     }
                 }
@@ -763,14 +793,18 @@ fn draw_ui(
             };
             ui::now_playing::render_now_playing(frame, mp_layout.now_playing, &now_playing, theme);
 
-            // Visualizer with real audio samples
-            let bar_heights = spectrum.process(vis_samples).to_vec();
-            ui::visualizer_view::render_visualizer(
-                frame,
-                mp_layout.visualizer,
-                &bar_heights,
-                theme,
-            );
+            if app.show_visualizer {
+                // Visualizer with real audio samples
+                let bar_heights = spectrum.process(vis_samples).to_vec();
+                ui::visualizer_view::render_visualizer(
+                    frame,
+                    mp_layout.visualizer,
+                    &bar_heights,
+                    theme,
+                );
+            } else {
+                render_logo(frame, mp_layout.visualizer, theme);
+            }
         }
     }
 
@@ -812,6 +846,61 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     frame.render_widget(header, area);
 }
 
+fn render_logo(frame: &mut Frame, area: Rect, theme: &Theme) {
+    use ratatui::widgets::{Block, Borders};
+
+    let block = Block::default()
+        .title(" TermTube ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let logo_lines = [
+        ".............................................",
+        ". ▓▓▓▓▓▓▓  ▓▓▓▓▓▓▓  ▓▓    ▓▓ ▓▓▓▓▓▓  ▓▓▓▓▓▓▓.",
+        ".    ▓▓      ▓▓     ▓▓    ▓▓ ▓▓   ▓▓ ▓▓     .",
+        ".    ▓▓      ▓▓     ▓▓    ▓▓ ▓▓▓▓▓▓  ▓▓▓▓▓  .",
+        ".    ▓▓      ▓▓     ▓▓    ▓▓ ▓▓   ▓▓ ▓▓     .",
+        ".    ▓▓      ▓▓      ▓▓▓▓▓▓  ▓▓▓▓▓▓  ▓▓▓▓▓▓▓.",
+        ".............................................",
+        "          TERMINAL  PLAYER",
+    ];
+
+    let height = inner.height as usize;
+    let width = inner.width as usize;
+    let total_lines = logo_lines.len();
+    let y_offset = if height > total_lines {
+        (height - total_lines) / 2
+    } else {
+        0
+    };
+
+    let buf = frame.buffer_mut();
+    for (i, line) in logo_lines.iter().enumerate() {
+        let y = inner.y + (y_offset + i) as u16;
+        if y >= inner.y + inner.height {
+            break;
+        }
+        let char_count = line.chars().count();
+        let x_offset = if width > char_count {
+            (width - char_count) / 2
+        } else {
+            0
+        };
+        let x = inner.x + x_offset as u16;
+        for (j, ch) in line.chars().enumerate() {
+            let cx = x + j as u16;
+            if cx < inner.x + inner.width {
+                let cell = &mut buf[(cx, y)];
+                cell.set_char(ch);
+                cell.set_style(Style::default().fg(theme.primary));
+            }
+        }
+    }
+}
+
 fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
     let help_text = vec![
         Line::from(Span::styled(
@@ -832,6 +921,7 @@ fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         Line::from(" j/k, ↑/↓   Navigate lists"),
         Line::from(" Enter      Select / play"),
         Line::from(" Q          Toggle queue view"),
+        Line::from(" v          Toggle visualizer / logo"),
         Line::from(" /          Search"),
         Line::from(" ?          Toggle this help"),
         Line::from(" q / Esc    Quit"),

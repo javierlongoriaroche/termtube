@@ -42,6 +42,8 @@ pub struct App {
     pub favorites: Favorites,
     /// Whether audio is currently playing.
     pub is_playing: bool,
+    /// Whether the visualizer is visible (vs logo).
+    pub show_visualizer: bool,
 }
 
 impl App {
@@ -65,6 +67,7 @@ impl App {
             queue: PlaybackQueue::new(),
             favorites,
             is_playing: false,
+            show_visualizer: true,
         }
     }
 
@@ -91,6 +94,7 @@ impl App {
             queue: PlaybackQueue::new(),
             favorites,
             is_playing: false,
+            show_visualizer: true,
         }
     }
 
@@ -100,6 +104,10 @@ impl App {
 
     pub fn toggle_shuffle(&mut self) {
         self.shuffle = !self.shuffle;
+    }
+
+    pub fn toggle_visualizer(&mut self) {
+        self.show_visualizer = !self.show_visualizer;
     }
 
     pub fn cycle_repeat(&mut self) {

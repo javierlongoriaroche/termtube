@@ -32,6 +32,7 @@ pub struct AudioEngine {
     visualizer_buffer: Arc<Mutex<VecDeque<f32>>>,
     stop_flag: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    decode_finished: Arc<AtomicBool>,
     stream: Option<cpal::Stream>,
     worker: Option<thread::JoinHandle<()>>,
     target_sample_rate: u32,
@@ -45,6 +46,7 @@ impl AudioEngine {
             visualizer_buffer: Arc::new(Mutex::new(VecDeque::new())),
             stop_flag: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
+            decode_finished: Arc::new(AtomicBool::new(false)),
             stream: None,
             worker: None,
             target_sample_rate: 48_000,
@@ -55,6 +57,7 @@ impl AudioEngine {
     pub fn play_url(&mut self, url: &str, cookies: Option<&Path>) -> Result<(), AudioEngineError> {
         self.stop();
         self.paused.store(false, Ordering::Relaxed);
+        self.decode_finished.store(false, Ordering::Relaxed);
 
         let host = cpal::default_host();
         let device = host
@@ -88,6 +91,7 @@ impl AudioEngine {
         let visualizer_buffer = Arc::clone(&self.visualizer_buffer);
         let target_sample_rate = self.target_sample_rate;
         let target_channels = self.target_channels;
+        let decode_finished = Arc::clone(&self.decode_finished);
 
         let worker = thread::spawn(move || {
             if let Err(err) = decode_loop(
@@ -101,6 +105,7 @@ impl AudioEngine {
             ) {
                 tracing::error!("audio decode loop error: {err}");
             }
+            decode_finished.store(true, Ordering::Relaxed);
         });
 
         self.worker = Some(worker);
@@ -122,6 +127,22 @@ impl AudioEngine {
     /// Returns true if there is an active worker thread (playing or paused).
     pub fn is_active(&self) -> bool {
         self.worker.is_some()
+    }
+
+    /// Returns true if decoding has finished (song ended) but playback buffer may still have data.
+    pub fn is_decode_finished(&self) -> bool {
+        self.decode_finished.load(Ordering::Relaxed)
+    }
+
+    /// Returns true if decode finished AND playback buffer is drained.
+    pub fn is_song_finished(&self) -> bool {
+        if !self.decode_finished.load(Ordering::Relaxed) {
+            return false;
+        }
+        match self.playback_buffer.lock() {
+            Ok(buf) => buf.is_empty(),
+            Err(_) => true,
+        }
     }
 
     pub fn stop(&mut self) {
