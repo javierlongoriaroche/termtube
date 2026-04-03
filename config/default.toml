@@ -1,0 +1,32 @@
+[general]
+cache_dir = "~/.termtube/cache"
+log_file = "~/.termtube/termtube.log"
+preload_count = 2
+
+[paths]
+cookies = "./cookies.txt"
+playlists = "./playlist.txt"
+
+[theme]
+name = "default"
+primary = "#61afef"
+secondary = "#c678dd"
+visualizer_colors = ["#98c379", "#e5c07b", "#e06c75"]
+
+[keybindings]
+play_pause = "space"
+next = "n"
+previous = "p"
+volume_up = "+"
+volume_down = "-"
+shuffle = "s"
+repeat = "r"
+favorite = "f"
+quit = "q"
+search = "/"
+queue = "Q"
+
+[visualizer]
+bars = 24
+fps = 30
+decay = 0.85

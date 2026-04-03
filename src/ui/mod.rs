@@ -1,0 +1,7 @@
+pub mod controls;
+pub mod layout;
+pub mod now_playing;
+pub mod playlist_view;
+pub mod queue_view;
+pub mod theme;
+pub mod visualizer_view;
