@@ -506,6 +506,7 @@ fn handle_action(
                 // Repeat One: replay the same song
                 if let Some(song) = ps.current_song.clone() {
                     play_song(app, engine, &song, ps);
+                    sync_sidebar_selection(app, sidebar_state, &song);
                 }
             } else if let Some(next_song) = ps.upcoming.pop_front() {
                 // Push current to history
@@ -515,6 +516,7 @@ fn handle_action(
                 // Refill one more song
                 refill_upcoming(app, ps, 1);
                 play_song(app, engine, &next_song, ps);
+                sync_sidebar_selection(app, sidebar_state, &next_song);
             }
         }
         Action::Previous => {
@@ -528,6 +530,7 @@ fn handle_action(
                     }
                 }
                 play_song(app, engine, &prev_song, ps);
+                sync_sidebar_selection(app, sidebar_state, &prev_song);
             }
         }
         Action::ToggleFavorite => {
@@ -571,6 +574,19 @@ fn handle_action(
             }
         }
         other => handler::apply_action(app, other),
+    }
+}
+
+/// Sync the sidebar song selection to highlight the currently playing song.
+fn sync_sidebar_selection(
+    app: &App,
+    sidebar_state: &mut PlaylistViewState,
+    song: &playlist::models::Song,
+) {
+    // Only sync if we're viewing the same playlist that's playing
+    let songs = app.current_playlist_songs();
+    if let Some(idx) = songs.iter().position(|s| s.video_id == song.video_id) {
+        sidebar_state.song_state.select(Some(idx));
     }
 }
 
