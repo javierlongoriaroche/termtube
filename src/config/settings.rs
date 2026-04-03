@@ -100,7 +100,7 @@ fn default_log_file() -> String {
     "~/.termtube/termtube.log".to_string()
 }
 fn default_preload_count() -> u8 {
-    2
+    5
 }
 fn default_cookies_path() -> String {
     "~/.termtube/cookies.txt".to_string()
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn test_default_settings() {
         let settings = Settings::default();
-        assert_eq!(settings.general.preload_count, 2);
+        assert_eq!(settings.general.preload_count, 5);
         assert_eq!(settings.visualizer.bars, 24);
         assert_eq!(settings.keybindings.quit, "q");
         assert_eq!(settings.theme.visualizer_colors.len(), 3);
@@ -335,7 +335,7 @@ bars = 32
     #[test]
     fn test_parse_empty_config() {
         let settings = Settings::from_str("").unwrap();
-        assert_eq!(settings.general.preload_count, 2);
+        assert_eq!(settings.general.preload_count, 5);
         assert_eq!(settings.visualizer.bars, 24);
     }
 

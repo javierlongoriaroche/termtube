@@ -27,6 +27,7 @@ use tracing::{error, info, warn};
 
 use app::{App, AppScreen};
 use audio::engine::AudioEngine;
+use audio::preloader::Preloader;
 use config::playlist::parse_playlist_file;
 use config::settings::Settings;
 use input::handler::{self, Action};
@@ -309,10 +310,54 @@ fn run_tui(app: &mut App) -> io::Result<()> {
 
     let mut engine = AudioEngine::new();
 
-    let result = main_loop(&mut terminal, app, &theme, tick_rate, &mut sidebar_state, &mut queue_state, &mut spectrum, &mut engine);
+    let preload_target = app
+        .settings
+        .general
+        .preload_count
+        .max(PRELOAD_SIZE as u8) as usize;
+    let cookies_for_preload = {
+        let cookies_path = PathBuf::from(&app.settings.paths.cookies);
+        if cookies_path.exists() {
+            Some(cookies_path)
+        } else {
+            None
+        }
+    };
+    let mut preloader = if preload_target > 0 {
+        match Preloader::new(
+            PathBuf::from(&app.settings.general.cache_dir),
+            cookies_for_preload,
+            preload_target,
+        ) {
+            Ok(preloader) => Some(preloader),
+            Err(err) => {
+                warn!("preloader disabled: {err}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let result = main_loop(
+        &mut terminal,
+        app,
+        &theme,
+        tick_rate,
+        &mut sidebar_state,
+        &mut queue_state,
+        &mut spectrum,
+        &mut engine,
+        &preloader,
+        preload_target,
+    );
 
     // Stop audio before restoring terminal
     engine.stop();
+
+    if let Some(preloader) = preloader.as_mut() {
+        preloader.stop();
+    }
 
     // Restore terminal
     disable_raw_mode()?;
@@ -338,6 +383,8 @@ struct PlayState {
     source_playlist: usize,
     /// The next linear index to pick from when refilling the upcoming queue (normal mode).
     next_linear_index: usize,
+    /// Remaining shuffled indices for the current shuffle cycle.
+    shuffle_pool: VecDeque<usize>,
 }
 
 impl PlayState {
@@ -351,6 +398,7 @@ impl PlayState {
             history: Vec::new(),
             source_playlist: 0,
             next_linear_index: 0,
+            shuffle_pool: VecDeque::new(),
         }
     }
 }
@@ -364,6 +412,8 @@ fn main_loop(
     queue_state: &mut QueueViewState,
     spectrum: &mut SpectrumAnalyzer,
     engine: &mut AudioEngine,
+    preloader: &Option<Preloader>,
+    preload_target: usize,
 ) -> io::Result<()> {
     let mut last_tick = Instant::now();
     let mut ps = PlayState::new();
@@ -382,6 +432,7 @@ fn main_loop(
                     ps.history.push(cur);
                 }
                 refill_upcoming(app, &mut ps, 1);
+                preload_upcoming(preloader, &ps.upcoming, preload_target);
                 let song_ref = next_song.clone();
                 play_song(app, engine, &next_song, &mut ps);
                 sync_sidebar_selection(app, sidebar_state, &song_ref);
@@ -409,7 +460,16 @@ fn main_loop(
                 // Only handle key press events (not release/repeat on some terminals)
                 if key.kind == KeyEventKind::Press {
                     let action = handler::map_key_event(key, &app.settings.keybindings, app.screen);
-                    handle_action(app, action, sidebar_state, queue_state, engine, &mut ps);
+                    handle_action(
+                        app,
+                        action,
+                        sidebar_state,
+                        queue_state,
+                        engine,
+                        &mut ps,
+                        preloader,
+                        preload_target,
+                    );
                 }
             }
         }
@@ -429,6 +489,8 @@ fn handle_action(
     queue_state: &mut QueueViewState,
     engine: &mut AudioEngine,
     ps: &mut PlayState,
+    preloader: &Option<Preloader>,
+    preload_target: usize,
 ) {
     match action {
         Action::NavigateUp => {
@@ -459,10 +521,12 @@ fn handle_action(
                         let song = songs[song_idx].clone();
 
                         if app.shuffle {
-                            // Shuffle: fill upcoming with random songs (excluding selected)
-                            fill_upcoming_shuffle(&songs, Some(&song), &mut ps.upcoming, PRELOAD_SIZE);
+                            // Shuffle: fill upcoming from a randomized pool (excluding selected)
+                            ps.shuffle_pool = build_shuffle_pool(&songs, Some(&song), &ps.upcoming);
+                            fill_upcoming_from_pool(&songs, Some(&song), ps, PRELOAD_SIZE, app.repeat);
                         } else {
                             // Normal: fill upcoming with the next PRELOAD_SIZE songs after selected
+                            ps.shuffle_pool.clear();
                             let start = song_idx + 1;
                             for i in 0..PRELOAD_SIZE {
                                 let idx = start + i;
@@ -477,6 +541,7 @@ fn handle_action(
                         }
 
                         play_song(app, engine, &song, ps);
+                        preload_upcoming(preloader, &ps.upcoming, preload_target);
                     }
                 }
             } else {
@@ -508,8 +573,10 @@ fn handle_action(
                     ps.upcoming.clear();
                     ps.source_playlist = app.selected_playlist;
                     if app.shuffle {
-                        fill_upcoming_shuffle(&songs, Some(&song), &mut ps.upcoming, PRELOAD_SIZE);
+                        ps.shuffle_pool = build_shuffle_pool(&songs, Some(&song), &ps.upcoming);
+                        fill_upcoming_from_pool(&songs, Some(&song), ps, PRELOAD_SIZE, app.repeat);
                     } else {
+                        ps.shuffle_pool.clear();
                         let start = song_idx + 1;
                         for i in 0..PRELOAD_SIZE {
                             let idx = start + i;
@@ -523,6 +590,7 @@ fn handle_action(
                         ps.next_linear_index = song_idx + 1 + PRELOAD_SIZE;
                     }
                     play_song(app, engine, &song, ps);
+                    preload_upcoming(preloader, &ps.upcoming, preload_target);
                 }
             }
         }
@@ -542,6 +610,7 @@ fn handle_action(
                 refill_upcoming(app, ps, 1);
                 play_song(app, engine, &next_song, ps);
                 sync_sidebar_selection(app, sidebar_state, &next_song);
+                preload_upcoming(preloader, &ps.upcoming, preload_target);
             }
         }
         Action::Previous => {
@@ -556,6 +625,7 @@ fn handle_action(
                 }
                 play_song(app, engine, &prev_song, ps);
                 sync_sidebar_selection(app, sidebar_state, &prev_song);
+                preload_upcoming(preloader, &ps.upcoming, preload_target);
             }
         }
         Action::ToggleFavorite => {
@@ -572,6 +642,37 @@ fn handle_action(
                     let vid = song.video_id.clone();
                     app.toggle_favorite(&vid);
                 }
+            }
+        }
+        Action::ToggleShuffle => {
+            let was_shuffle = app.shuffle;
+            app.toggle_shuffle();
+
+            if ps.current_song.is_none() || was_shuffle == app.shuffle {
+                return;
+            }
+
+            let songs: Vec<playlist::models::Song> = if ps.source_playlist < app.cached_playlists.len() {
+                app.cached_playlists[ps.source_playlist].songs.clone()
+            } else {
+                return;
+            };
+
+            if songs.is_empty() {
+                return;
+            }
+
+            let current = ps.current_song.clone();
+            if let Some(current) = current.as_ref() {
+                if app.shuffle {
+                    ps.upcoming.clear();
+                    ps.shuffle_pool = build_shuffle_pool(&songs, Some(current), &ps.upcoming);
+                    fill_upcoming_from_pool(&songs, Some(current), ps, PRELOAD_SIZE, app.repeat);
+                } else {
+                    ps.shuffle_pool.clear();
+                    rebuild_linear_upcoming(&songs, current, ps, app.repeat);
+                }
+                preload_upcoming(preloader, &ps.upcoming, preload_target);
             }
         }
         Action::AddToQueue => {
@@ -602,6 +703,21 @@ fn handle_action(
     }
 }
 
+fn preload_upcoming(
+    preloader: &Option<Preloader>,
+    upcoming: &VecDeque<playlist::models::Song>,
+    preload_target: usize,
+) {
+    if preload_target == 0 {
+        return;
+    }
+    if let Some(preloader) = preloader.as_ref() {
+        for song in upcoming.iter().take(preload_target) {
+            preloader.enqueue(&song.url());
+        }
+    }
+}
+
 /// Sync the sidebar song selection to highlight the currently playing song.
 fn sync_sidebar_selection(
     app: &App,
@@ -615,31 +731,77 @@ fn sync_sidebar_selection(
     }
 }
 
-/// Fill the upcoming queue with random songs from the playlist.
-fn fill_upcoming_shuffle(
+/// Build a shuffled pool of indices excluding the current song and upcoming entries.
+fn build_shuffle_pool(
     songs: &[playlist::models::Song],
     exclude: Option<&playlist::models::Song>,
-    upcoming: &mut VecDeque<playlist::models::Song>,
-    count: usize,
-) {
+    upcoming: &VecDeque<playlist::models::Song>,
+) -> VecDeque<usize> {
     use rand::seq::SliceRandom;
+    use std::collections::HashSet;
     if songs.is_empty() {
-        return;
+        return VecDeque::new();
     }
     let mut rng = rand::thread_rng();
-    let mut indices: Vec<usize> = (0..songs.len()).collect();
-    // Exclude the currently playing song from candidates
+    let mut exclude_ids: HashSet<String> = HashSet::new();
     if let Some(excl) = exclude {
-        indices.retain(|&i| songs[i].video_id != excl.video_id);
+        exclude_ids.insert(excl.video_id.clone());
     }
-    // Also exclude songs already in upcoming
-    let upcoming_ids: Vec<String> = upcoming.iter().map(|s| s.video_id.clone()).collect();
-    indices.retain(|&i| !upcoming_ids.contains(&songs[i].video_id));
+    for song in upcoming {
+        exclude_ids.insert(song.video_id.clone());
+    }
 
+    let mut indices: Vec<usize> = (0..songs.len()).collect();
+    indices.retain(|&i| !exclude_ids.contains(&songs[i].video_id));
     indices.shuffle(&mut rng);
-    let needed = count.saturating_sub(upcoming.len());
-    for &idx in indices.iter().take(needed) {
-        upcoming.push_back(songs[idx].clone());
+    VecDeque::from(indices)
+}
+
+/// Fill the upcoming queue from the shuffle pool until the target size is reached.
+fn fill_upcoming_from_pool(
+    songs: &[playlist::models::Song],
+    current: Option<&playlist::models::Song>,
+    ps: &mut PlayState,
+    target_len: usize,
+    repeat: app::RepeatMode,
+) {
+    while ps.upcoming.len() < target_len {
+        if let Some(idx) = ps.shuffle_pool.pop_front() {
+            ps.upcoming.push_back(songs[idx].clone());
+            continue;
+        }
+
+        if repeat != app::RepeatMode::All {
+            break;
+        }
+
+        ps.shuffle_pool = build_shuffle_pool(songs, current, &ps.upcoming);
+        if ps.shuffle_pool.is_empty() {
+            break;
+        }
+    }
+}
+
+/// Rebuild the upcoming queue in linear order starting after the current song.
+fn rebuild_linear_upcoming(
+    songs: &[playlist::models::Song],
+    current: &playlist::models::Song,
+    ps: &mut PlayState,
+    repeat: app::RepeatMode,
+) {
+    ps.upcoming.clear();
+    if let Some(song_idx) = songs.iter().position(|s| s.video_id == current.video_id) {
+        let start = song_idx + 1;
+        for i in 0..PRELOAD_SIZE {
+            let idx = start + i;
+            if idx < songs.len() {
+                ps.upcoming.push_back(songs[idx].clone());
+            } else if repeat == app::RepeatMode::All {
+                let wrap = idx % songs.len();
+                ps.upcoming.push_back(songs[wrap].clone());
+            }
+        }
+        ps.next_linear_index = song_idx + 1 + PRELOAD_SIZE;
     }
 }
 
@@ -657,7 +819,8 @@ fn refill_upcoming(app: &App, ps: &mut PlayState, count: usize) {
 
     if app.shuffle {
         let target = ps.upcoming.len() + count;
-        fill_upcoming_shuffle(&songs, ps.current_song.as_ref(), &mut ps.upcoming, target);
+        let current = ps.current_song.clone();
+        fill_upcoming_from_pool(&songs, current.as_ref(), ps, target, app.repeat);
     } else {
         for _ in 0..count {
             let idx = ps.next_linear_index;
