@@ -7,6 +7,7 @@ mod sync;
 mod ui;
 mod visualizer;
 
+use std::collections::VecDeque;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -321,6 +322,39 @@ fn run_tui(app: &mut App) -> io::Result<()> {
     result
 }
 
+const PRELOAD_SIZE: usize = 5;
+
+/// State for the preloaded playback queue.
+struct PlayState {
+    current_song: Option<playlist::models::Song>,
+    playback_start: Option<Instant>,
+    paused_duration: Duration,
+    pause_instant: Option<Instant>,
+    /// Songs coming up next (preloaded).
+    upcoming: VecDeque<playlist::models::Song>,
+    /// Songs already played (for Previous).
+    history: Vec<playlist::models::Song>,
+    /// Source playlist index from which the queue was built.
+    source_playlist: usize,
+    /// The next linear index to pick from when refilling the upcoming queue (normal mode).
+    next_linear_index: usize,
+}
+
+impl PlayState {
+    fn new() -> Self {
+        Self {
+            current_song: None,
+            playback_start: None,
+            paused_duration: Duration::ZERO,
+            pause_instant: None,
+            upcoming: VecDeque::new(),
+            history: Vec::new(),
+            source_playlist: 0,
+            next_linear_index: 0,
+        }
+    }
+}
+
 fn main_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
@@ -332,10 +366,7 @@ fn main_loop(
     engine: &mut AudioEngine,
 ) -> io::Result<()> {
     let mut last_tick = Instant::now();
-    let mut playback_start: Option<Instant> = None;
-    let mut paused_duration: Duration = Duration::ZERO;
-    let mut pause_instant: Option<Instant> = None;
-    let mut current_song: Option<playlist::models::Song> = None;
+    let mut ps = PlayState::new();
 
     while app.running {
         // Grab visualizer samples from the audio engine
@@ -343,7 +374,7 @@ fn main_loop(
 
         // Draw
         terminal.draw(|frame| {
-            draw_ui(frame, app, theme, sidebar_state, queue_state, spectrum, &current_song, playback_start, paused_duration, pause_instant, &vis_samples);
+            draw_ui(frame, app, theme, sidebar_state, queue_state, spectrum, &ps.current_song, ps.playback_start, ps.paused_duration, ps.pause_instant, &vis_samples);
         })?;
 
         // Event handling
@@ -353,7 +384,7 @@ fn main_loop(
                 // Only handle key press events (not release/repeat on some terminals)
                 if key.kind == KeyEventKind::Press {
                     let action = handler::map_key_event(key, &app.settings.keybindings, app.screen);
-                    handle_action(app, action, sidebar_state, queue_state, engine, &mut current_song, &mut playback_start, &mut paused_duration, &mut pause_instant);
+                    handle_action(app, action, sidebar_state, queue_state, engine, &mut ps);
                 }
             }
         }
@@ -372,10 +403,7 @@ fn handle_action(
     sidebar_state: &mut PlaylistViewState,
     queue_state: &mut QueueViewState,
     engine: &mut AudioEngine,
-    current_song: &mut Option<playlist::models::Song>,
-    playback_start: &mut Option<Instant>,
-    paused_duration: &mut Duration,
-    pause_instant: &mut Option<Instant>,
+    ps: &mut PlayState,
 ) {
     match action {
         Action::NavigateUp => {
@@ -395,11 +423,35 @@ fn handle_action(
         Action::ToggleFocus => sidebar_state.toggle_focus(),
         Action::Select => {
             if sidebar_state.focus == SidebarFocus::Songs {
-                // Play the selected song
                 if let Some(song_idx) = sidebar_state.selected_song() {
-                    let songs = app.current_playlist_songs();
-                    if let Some(song) = songs.get(song_idx).cloned() {
-                        play_song(app, engine, &song, current_song, playback_start, paused_duration, pause_instant);
+                    let songs = app.current_playlist_songs().to_vec();
+                    if song_idx < songs.len() {
+                        // Build the preload queue starting from the selected song
+                        ps.history.clear();
+                        ps.upcoming.clear();
+                        ps.source_playlist = app.selected_playlist;
+
+                        let song = songs[song_idx].clone();
+
+                        if app.shuffle {
+                            // Shuffle: fill upcoming with random songs (excluding selected)
+                            fill_upcoming_shuffle(&songs, Some(&song), &mut ps.upcoming, PRELOAD_SIZE);
+                        } else {
+                            // Normal: fill upcoming with the next PRELOAD_SIZE songs after selected
+                            let start = song_idx + 1;
+                            for i in 0..PRELOAD_SIZE {
+                                let idx = start + i;
+                                if idx < songs.len() {
+                                    ps.upcoming.push_back(songs[idx].clone());
+                                } else if app.repeat == app::RepeatMode::All {
+                                    let wrap = idx % songs.len();
+                                    ps.upcoming.push_back(songs[wrap].clone());
+                                }
+                            }
+                            ps.next_linear_index = song_idx + 1 + PRELOAD_SIZE;
+                        }
+
+                        play_song(app, engine, &song, ps);
                     }
                 }
             } else {
@@ -413,54 +465,72 @@ fn handle_action(
         }
         Action::PlayPause => {
             if engine.is_active() {
-                // Toggle pause/resume on the current track
                 if engine.is_paused() {
-                    // Accumulate paused time
-                    if let Some(pi) = pause_instant.take() {
-                        *paused_duration += pi.elapsed();
+                    if let Some(pi) = ps.pause_instant.take() {
+                        ps.paused_duration += pi.elapsed();
                     }
                     engine.resume();
                     app.is_playing = true;
                 } else {
-                    *pause_instant = Some(Instant::now());
+                    ps.pause_instant = Some(Instant::now());
                     engine.pause();
                     app.is_playing = false;
                 }
             } else if let Some(song_idx) = sidebar_state.selected_song() {
-                // No active track — start playing the selected song
-                let songs = app.current_playlist_songs();
+                let songs = app.current_playlist_songs().to_vec();
                 if let Some(song) = songs.get(song_idx).cloned() {
-                    play_song(app, engine, &song, current_song, playback_start, paused_duration, pause_instant);
+                    ps.history.clear();
+                    ps.upcoming.clear();
+                    ps.source_playlist = app.selected_playlist;
+                    if app.shuffle {
+                        fill_upcoming_shuffle(&songs, Some(&song), &mut ps.upcoming, PRELOAD_SIZE);
+                    } else {
+                        let start = song_idx + 1;
+                        for i in 0..PRELOAD_SIZE {
+                            let idx = start + i;
+                            if idx < songs.len() {
+                                ps.upcoming.push_back(songs[idx].clone());
+                            } else if app.repeat == app::RepeatMode::All {
+                                let wrap = idx % songs.len();
+                                ps.upcoming.push_back(songs[wrap].clone());
+                            }
+                        }
+                        ps.next_linear_index = song_idx + 1 + PRELOAD_SIZE;
+                    }
+                    play_song(app, engine, &song, ps);
                 }
             }
         }
         Action::Next => {
-            // Play next song in the list
-            if let Some(song_idx) = sidebar_state.selected_song() {
-                let songs = app.current_playlist_songs();
-                let next_idx = song_idx + 1;
-                if next_idx < songs.len() {
-                    sidebar_state.next();
-                    if let Some(song) = songs.get(next_idx).cloned() {
-                        play_song(app, engine, &song, current_song, playback_start, paused_duration, pause_instant);
-                    }
+            if app.repeat == app::RepeatMode::One {
+                // Repeat One: replay the same song
+                if let Some(song) = ps.current_song.clone() {
+                    play_song(app, engine, &song, ps);
                 }
+            } else if let Some(next_song) = ps.upcoming.pop_front() {
+                // Push current to history
+                if let Some(cur) = ps.current_song.take() {
+                    ps.history.push(cur);
+                }
+                // Refill one more song
+                refill_upcoming(app, ps, 1);
+                play_song(app, engine, &next_song, ps);
             }
         }
         Action::Previous => {
-            // Play previous song in the list
-            if let Some(song_idx) = sidebar_state.selected_song() {
-                if song_idx > 0 {
-                    let songs = app.current_playlist_songs();
-                    sidebar_state.previous();
-                    if let Some(song) = songs.get(song_idx - 1).cloned() {
-                        play_song(app, engine, &song, current_song, playback_start, paused_duration, pause_instant);
+            if let Some(prev_song) = ps.history.pop() {
+                // Push current song to the front of upcoming
+                if let Some(cur) = ps.current_song.take() {
+                    ps.upcoming.push_front(cur);
+                    // Keep upcoming at max PRELOAD_SIZE
+                    while ps.upcoming.len() > PRELOAD_SIZE {
+                        ps.upcoming.pop_back();
                     }
                 }
+                play_song(app, engine, &prev_song, ps);
             }
         }
         Action::ToggleFavorite => {
-            // Toggle favorite for the currently selected song
             if app.screen == AppScreen::QueueView {
                 if let Some(idx) = queue_state.selected() {
                     if let Some(item) = app.queue.items().get(idx) {
@@ -468,13 +538,11 @@ fn handle_action(
                         app.toggle_favorite(&id);
                     }
                 }
-            } else {
-                if let Some(song_idx) = sidebar_state.selected_song() {
-                    let songs = app.current_playlist_songs();
-                    if let Some(song) = songs.get(song_idx) {
-                        let vid = song.video_id.clone();
-                        app.toggle_favorite(&vid);
-                    }
+            } else if let Some(song_idx) = sidebar_state.selected_song() {
+                let songs = app.current_playlist_songs();
+                if let Some(song) = songs.get(song_idx) {
+                    let vid = song.video_id.clone();
+                    app.toggle_favorite(&vid);
                 }
             }
         }
@@ -506,15 +574,70 @@ fn handle_action(
     }
 }
 
+/// Fill the upcoming queue with random songs from the playlist.
+fn fill_upcoming_shuffle(
+    songs: &[playlist::models::Song],
+    exclude: Option<&playlist::models::Song>,
+    upcoming: &mut VecDeque<playlist::models::Song>,
+    count: usize,
+) {
+    use rand::seq::SliceRandom;
+    if songs.is_empty() {
+        return;
+    }
+    let mut rng = rand::thread_rng();
+    let mut indices: Vec<usize> = (0..songs.len()).collect();
+    // Exclude the currently playing song from candidates
+    if let Some(excl) = exclude {
+        indices.retain(|&i| songs[i].video_id != excl.video_id);
+    }
+    // Also exclude songs already in upcoming
+    let upcoming_ids: Vec<String> = upcoming.iter().map(|s| s.video_id.clone()).collect();
+    indices.retain(|&i| !upcoming_ids.contains(&songs[i].video_id));
+
+    indices.shuffle(&mut rng);
+    let needed = count.saturating_sub(upcoming.len());
+    for &idx in indices.iter().take(needed) {
+        upcoming.push_back(songs[idx].clone());
+    }
+}
+
+/// Refill the upcoming queue with `count` more songs based on current mode.
+fn refill_upcoming(app: &App, ps: &mut PlayState, count: usize) {
+    let songs: Vec<playlist::models::Song> = if ps.source_playlist < app.cached_playlists.len() {
+        app.cached_playlists[ps.source_playlist].songs.clone()
+    } else {
+        return;
+    };
+
+    if songs.is_empty() {
+        return;
+    }
+
+    if app.shuffle {
+        let target = ps.upcoming.len() + count;
+        fill_upcoming_shuffle(&songs, ps.current_song.as_ref(), &mut ps.upcoming, target);
+    } else {
+        for _ in 0..count {
+            let idx = ps.next_linear_index;
+            if idx < songs.len() {
+                ps.upcoming.push_back(songs[idx].clone());
+                ps.next_linear_index += 1;
+            } else if app.repeat == app::RepeatMode::All {
+                let wrap = idx % songs.len();
+                ps.upcoming.push_back(songs[wrap].clone());
+                ps.next_linear_index += 1;
+            }
+        }
+    }
+}
+
 /// Start playing a song via the audio engine.
 fn play_song(
     app: &mut App,
     engine: &mut AudioEngine,
     song: &playlist::models::Song,
-    current_song: &mut Option<playlist::models::Song>,
-    playback_start: &mut Option<Instant>,
-    paused_duration: &mut Duration,
-    pause_instant: &mut Option<Instant>,
+    ps: &mut PlayState,
 ) {
     let cookies_path = PathBuf::from(&app.settings.paths.cookies);
     let cookies = if cookies_path.exists() {
@@ -529,18 +652,18 @@ fn play_song(
     match engine.play_url(&url, cookies) {
         Ok(()) => {
             app.is_playing = true;
-            *current_song = Some(song.clone());
-            *playback_start = Some(Instant::now());
-            *paused_duration = Duration::ZERO;
-            *pause_instant = None;
+            ps.current_song = Some(song.clone());
+            ps.playback_start = Some(Instant::now());
+            ps.paused_duration = Duration::ZERO;
+            ps.pause_instant = None;
         }
         Err(e) => {
             error!("Failed to play {}: {e}", song.title);
             app.is_playing = false;
-            *current_song = None;
-            *playback_start = None;
-            *paused_duration = Duration::ZERO;
-            *pause_instant = None;
+            ps.current_song = None;
+            ps.playback_start = None;
+            ps.paused_duration = Duration::ZERO;
+            ps.pause_instant = None;
         }
     }
 }
