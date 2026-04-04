@@ -45,6 +45,38 @@ cargo build --release
 # Binary at target/release/termtube
 ```
 
+## Linux AppImage release
+
+TermTube provides ready-to-run Linux AppImages that bundle `yt-dlp` and `ffmpeg`, so users can run the app without installing those dependencies separately.
+
+### Available builds
+- `termtube-x86_64.AppImage` — Linux x86_64
+- `termtube-aarch64.AppImage` — Linux ARM64
+
+### Run the AppImage
+
+```bash
+chmod +x termtube-x86_64.AppImage
+./termtube-x86_64.AppImage --help
+```
+
+```bash
+chmod +x termtube-aarch64.AppImage
+./termtube-aarch64.AppImage --help
+```
+
+### Build locally from source
+
+```bash
+bash packaging/build-appimage.sh
+```
+
+### Build ARM64 locally
+
+```bash
+TARGET_ARCH=aarch64 bash packaging/build-appimage.sh
+```
+
 ## Quick Start
 
 1. **Create a playlist file** (`playlist.txt`):
