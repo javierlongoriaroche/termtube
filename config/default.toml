@@ -24,6 +24,7 @@ repeat = "r"
 favorite = "f"
 quit = "q"
 search = "/"
+search_alt = "F"
 queue = "Q"
 
 [visualizer]

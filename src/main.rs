@@ -3,6 +3,7 @@ mod audio;
 mod config;
 mod input;
 mod playlist;
+mod search;
 mod sync;
 mod ui;
 mod visualizer;
@@ -32,10 +33,12 @@ use config::playlist::parse_playlist_file;
 use config::settings::Settings;
 use input::handler::{self, Action};
 use playlist::manager::PlaylistManager;
+use search::SearchCache;
 use ui::layout::{AppLayout, MainPanelLayout};
 use ui::now_playing::NowPlayingInfo;
 use ui::playlist_view::{PlaylistViewState, SidebarFocus};
 use ui::queue_view::QueueViewState;
+use ui::search_view::SearchViewState;
 use ui::theme::Theme;
 use visualizer::spectrum::SpectrumAnalyzer;
 
@@ -301,6 +304,7 @@ fn run_tui(app: &mut App) -> io::Result<()> {
     sidebar_state.set_playlist_count(app.playlists.len());
 
     let mut queue_state = QueueViewState::new();
+    let mut search_state = SearchViewState::new();
 
     let mut spectrum = SpectrumAnalyzer::new(
         app.settings.visualizer.bars as usize,
@@ -346,6 +350,7 @@ fn run_tui(app: &mut App) -> io::Result<()> {
         tick_rate,
         &mut sidebar_state,
         &mut queue_state,
+        &mut search_state,
         &mut spectrum,
         &mut engine,
         &preloader,
@@ -368,6 +373,8 @@ fn run_tui(app: &mut App) -> io::Result<()> {
 }
 
 const PRELOAD_SIZE: usize = 5;
+const SEARCH_LIMIT: usize = 10;
+const SEARCH_CACHE_TTL_SECS: u64 = 600;
 
 /// State for the preloaded playback queue.
 struct PlayState {
@@ -410,6 +417,7 @@ fn main_loop(
     tick_rate: Duration,
     sidebar_state: &mut PlaylistViewState,
     queue_state: &mut QueueViewState,
+    search_state: &mut SearchViewState,
     spectrum: &mut SpectrumAnalyzer,
     engine: &mut AudioEngine,
     preloader: &Option<Preloader>,
@@ -450,7 +458,20 @@ fn main_loop(
 
         // Draw
         terminal.draw(|frame| {
-            draw_ui(frame, app, theme, sidebar_state, queue_state, spectrum, &ps.current_song, ps.playback_start, ps.paused_duration, ps.pause_instant, &vis_samples);
+            draw_ui(
+                frame,
+                app,
+                theme,
+                sidebar_state,
+                queue_state,
+                search_state,
+                spectrum,
+                &ps.current_song,
+                ps.playback_start,
+                ps.paused_duration,
+                ps.pause_instant,
+                &vis_samples,
+            );
         })?;
 
         // Event handling
@@ -465,6 +486,7 @@ fn main_loop(
                         action,
                         sidebar_state,
                         queue_state,
+                        search_state,
                         engine,
                         &mut ps,
                         preloader,
@@ -487,6 +509,7 @@ fn handle_action(
     action: Action,
     sidebar_state: &mut PlaylistViewState,
     queue_state: &mut QueueViewState,
+    search_state: &mut SearchViewState,
     engine: &mut AudioEngine,
     ps: &mut PlayState,
     preloader: &Option<Preloader>,
@@ -496,6 +519,8 @@ fn handle_action(
         Action::NavigateUp => {
             if app.screen == AppScreen::QueueView {
                 queue_state.previous();
+            } else if app.screen == AppScreen::Search {
+                search_state.previous();
             } else {
                 sidebar_state.previous();
             }
@@ -503,12 +528,26 @@ fn handle_action(
         Action::NavigateDown => {
             if app.screen == AppScreen::QueueView {
                 queue_state.next();
+            } else if app.screen == AppScreen::Search {
+                search_state.next();
             } else {
                 sidebar_state.next();
             }
         }
-        Action::ToggleFocus => sidebar_state.toggle_focus(),
+        Action::ToggleFocus => {
+            if app.screen != AppScreen::Search {
+                sidebar_state.toggle_focus();
+            }
+        }
         Action::Select => {
+            if app.screen == AppScreen::Search {
+                if should_execute_search(&app.search) {
+                    execute_search(app, search_state);
+                } else {
+                    play_selected_search(app, search_state, engine, ps);
+                }
+                return;
+            }
             if sidebar_state.focus == SidebarFocus::Songs {
                 if let Some(song_idx) = sidebar_state.selected_song() {
                     let songs = app.current_playlist_songs().to_vec();
@@ -636,6 +675,10 @@ fn handle_action(
                         app.toggle_favorite(&id);
                     }
                 }
+            } else if app.screen == AppScreen::Search {
+                if let Some(song) = selected_search_song(app, search_state) {
+                    app.toggle_favorite(&song.video_id);
+                }
             } else if let Some(song_idx) = sidebar_state.selected_song() {
                 let songs = app.current_playlist_songs();
                 if let Some(song) = songs.get(song_idx) {
@@ -676,11 +719,25 @@ fn handle_action(
             }
         }
         Action::AddToQueue => {
-            if let Some(song_idx) = sidebar_state.selected_song() {
+            if app.screen == AppScreen::Search {
+                if let Some(song) = selected_search_song(app, search_state) {
+                    app.add_to_queue(&song);
+                    queue_state.set_count(app.queue.len());
+                }
+            } else if let Some(song_idx) = sidebar_state.selected_song() {
                 let songs = app.current_playlist_songs();
                 if let Some(song) = songs.get(song_idx).cloned() {
                     app.add_to_queue(&song);
                     queue_state.set_count(app.queue.len());
+                }
+            }
+        }
+        Action::AddToPlaylist => {
+            if app.screen == AppScreen::Search {
+                if let Some(song) = selected_search_song(app, search_state) {
+                    add_song_to_selected_playlist(app, &song);
+                    let song_count = app.current_playlist_songs().len();
+                    sidebar_state.set_song_count(song_count);
                 }
             }
         }
@@ -699,8 +756,155 @@ fn handle_action(
                 app.queue.remove(idx);
             }
         }
+        Action::Search => {
+            app.screen = AppScreen::Search;
+            app.search.clear_status();
+            search_state.set_count(app.search.results.len());
+            if !app.search.results.is_empty() {
+                search_state.list_state.select(Some(0));
+            }
+        }
+        Action::SearchInput(ch) => {
+            app.search.query.push(ch);
+            app.search.results.clear();
+            app.search.last_query.clear();
+            app.search.clear_status();
+            search_state.set_count(0);
+        }
+        Action::SearchBackspace => {
+            app.search.query.pop();
+            app.search.results.clear();
+            app.search.last_query.clear();
+            app.search.clear_status();
+            search_state.set_count(0);
+        }
+        Action::SearchClear => {
+            app.search.query.clear();
+            app.search.results.clear();
+            app.search.last_query.clear();
+            app.search.clear_status();
+            search_state.set_count(0);
+        }
         other => handler::apply_action(app, other),
     }
+}
+
+fn should_execute_search(search: &app::SearchState) -> bool {
+    let query = search.query.trim();
+    if query.is_empty() {
+        return false;
+    }
+    search.results.is_empty() || search.last_query != query
+}
+
+fn execute_search(app: &mut App, search_state: &mut SearchViewState) {
+    let query = app.search.query.trim().to_string();
+    if query.is_empty() {
+        app.search.error = Some("Type a search query".to_string());
+        return;
+    }
+
+    app.search.clear_status();
+    app.search.is_loading = true;
+
+    let cache_dir = PathBuf::from(&app.settings.general.cache_dir);
+    let cache = SearchCache::new(&cache_dir);
+    if let Some(results) = cache.load(&query, SEARCH_CACHE_TTL_SECS) {
+        app.search.results = results;
+        app.search.cache_hit = true;
+        app.search.is_loading = false;
+        app.search.last_query = query.clone();
+        search_state.set_count(app.search.results.len());
+        if !app.search.results.is_empty() {
+            search_state.list_state.select(Some(0));
+        }
+        return;
+    }
+
+    let cookies_path = PathBuf::from(&app.settings.paths.cookies);
+    let cookies = if cookies_path.exists() {
+        Some(cookies_path.as_path())
+    } else {
+        None
+    };
+
+    match tokio::runtime::Runtime::new() {
+        Ok(rt) => match rt.block_on(sync::fetcher::search_youtube_music(
+            &query,
+            cookies,
+            SEARCH_LIMIT,
+        )) {
+            Ok(results) => {
+                app.search.results = results;
+                app.search.cache_hit = false;
+                app.search.error = None;
+                app.search.status = None;
+                let _ = cache.save(&query, &app.search.results);
+            }
+            Err(e) => {
+                app.search.results.clear();
+                app.search.error = Some(format!("Search failed: {e}"));
+            }
+        },
+        Err(e) => {
+            app.search.results.clear();
+            app.search.error = Some(format!("Search runtime error: {e}"));
+        }
+    }
+
+    app.search.is_loading = false;
+    app.search.last_query = query;
+    search_state.set_count(app.search.results.len());
+    if !app.search.results.is_empty() {
+        search_state.list_state.select(Some(0));
+    }
+}
+
+fn selected_search_song(app: &App, search_state: &SearchViewState) -> Option<playlist::models::Song> {
+    let idx = search_state.selected()?;
+    app.search.results.get(idx).cloned()
+}
+
+fn play_selected_search(
+    app: &mut App,
+    search_state: &SearchViewState,
+    engine: &mut AudioEngine,
+    ps: &mut PlayState,
+) {
+    if let Some(song) = selected_search_song(app, search_state) {
+        ps.history.clear();
+        ps.upcoming.clear();
+        ps.shuffle_pool.clear();
+        ps.source_playlist = usize::MAX;
+        ps.next_linear_index = 0;
+        play_song(app, engine, &song, ps);
+    }
+}
+
+fn add_song_to_selected_playlist(app: &mut App, song: &playlist::models::Song) {
+    if app.selected_playlist >= app.cached_playlists.len() {
+        app.search.error = Some("Select a playlist to add results".to_string());
+        return;
+    }
+
+    let playlist = &mut app.cached_playlists[app.selected_playlist];
+    if playlist.songs.iter().any(|s| s.video_id == song.video_id) {
+        app.search.error = Some("Song already in playlist".to_string());
+        return;
+    }
+
+    playlist.songs.push(song.clone());
+    let cache_dir = PathBuf::from(&app.settings.general.cache_dir);
+    let manager = PlaylistManager::new(&cache_dir);
+    if let Err(err) = manager.save_playlist(playlist) {
+        app.search.error = Some(format!("Failed to save playlist: {err}"));
+        return;
+    }
+
+    let index = playlist::models::PlaylistIndex::from_playlists(&app.cached_playlists);
+    let _ = manager.save_index(&index);
+    app.search.error = None;
+    app.search.status = Some("Added to playlist".to_string());
 }
 
 fn preload_upcoming(
@@ -878,6 +1082,7 @@ fn draw_ui(
     theme: &Theme,
     sidebar_state: &mut PlaylistViewState,
     queue_state: &mut QueueViewState,
+    search_state: &mut SearchViewState,
     spectrum: &mut SpectrumAnalyzer,
     current_song: &Option<playlist::models::Song>,
     playback_start: Option<Instant>,
@@ -925,6 +1130,25 @@ fn draw_ui(
                 &favorite_ids,
                 &queue_ids,
                 queue_state,
+                theme,
+            );
+        }
+        AppScreen::Search => {
+            let current_playlist = app
+                .playlists
+                .get(app.selected_playlist)
+                .map(|p| p.name.as_str());
+            ui::search_view::render_search(
+                frame,
+                layout.main_panel,
+                &app.search.query,
+                &app.search.results,
+                search_state,
+                app.search.is_loading,
+                app.search.error.as_deref(),
+                app.search.status.as_deref(),
+                app.search.cache_hit,
+                current_playlist,
                 theme,
             );
         }
@@ -1085,7 +1309,9 @@ fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         Line::from(" Enter      Select / play"),
         Line::from(" Q          Toggle queue view"),
         Line::from(" v          Toggle visualizer / logo"),
-        Line::from(" /          Search"),
+        Line::from(" /, F       Search"),
+        Line::from(" Search: Enter = search/play, Ctrl+Q queue, Ctrl+F favorite"),
+        Line::from(" Search: Ctrl+L add to playlist, Ctrl+U clear"),
         Line::from(" ?          Toggle this help"),
         Line::from(" q / Esc    Quit"),
     ];
@@ -1097,4 +1323,49 @@ fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
 
     let paragraph = Paragraph::new(help_text).block(block);
     frame.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore] // Ignorar por defecto, ejecutar manualmente con --ignored
+    async fn test_real_youtube_search_with_cookies() {
+        use std::path::Path;
+        use crate::sync::fetcher::{search_youtube_music, check_ytdlp};
+
+        // Verificar que yt-dlp esté disponible
+        check_ytdlp().await.expect("yt-dlp debe estar instalado");
+
+        // Usar cookies.txt si existe
+        let cookies_path = Path::new("cookies.txt");
+        let cookies = if cookies_path.exists() {
+            Some(cookies_path)
+        } else {
+            panic!("cookies.txt no encontrado. Necesitas un archivo de cookies válido para YouTube.");
+        };
+
+        // Realizar búsqueda
+        let query = "lofi beats";
+        let limit = 5;
+        let results = search_youtube_music(query, cookies, limit).await.expect("La búsqueda debe ser exitosa");
+
+        // Verificar resultados
+        assert!(!results.is_empty(), "Debe haber al menos un resultado");
+        assert!(results.len() <= limit, "No debe haber más resultados que el límite");
+
+        // Verificar que cada canción tenga campos requeridos
+        for song in &results {
+            assert!(!song.title.is_empty(), "El título no debe estar vacío");
+            assert!(!song.video_id.is_empty(), "El video_id no debe estar vacío");
+            assert!(!song.artist.is_empty(), "El artista no debe estar vacío");
+            // duration puede ser None
+        }
+
+        // Verificar que los resultados sean relevantes (opcional, pero útil)
+        let titles_lower: Vec<String> = results.iter().map(|s| s.title.to_lowercase()).collect();
+        let has_relevant = titles_lower.iter().any(|t| t.contains("lofi") || t.contains("beats"));
+        assert!(has_relevant, "Al menos un resultado debe ser relevante para la query");
+    }
 }

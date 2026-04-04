@@ -44,6 +44,40 @@ pub struct App {
     pub is_playing: bool,
     /// Whether the visualizer is visible (vs logo).
     pub show_visualizer: bool,
+    /// Search state for YouTube Music queries.
+    pub search: SearchState,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchState {
+    pub query: String,
+    pub results: Vec<Song>,
+    pub is_loading: bool,
+    pub error: Option<String>,
+    pub status: Option<String>,
+    pub cache_hit: bool,
+    pub last_query: String,
+}
+
+impl SearchState {
+    pub fn new() -> Self {
+        Self {
+            query: String::new(),
+            results: Vec::new(),
+            is_loading: false,
+            error: None,
+            status: None,
+            cache_hit: false,
+            last_query: String::new(),
+        }
+    }
+
+    pub fn clear_status(&mut self) {
+        self.is_loading = false;
+        self.error = None;
+        self.status = None;
+        self.cache_hit = false;
+    }
 }
 
 impl App {
@@ -68,6 +102,7 @@ impl App {
             favorites,
             is_playing: false,
             show_visualizer: true,
+            search: SearchState::new(),
         }
     }
 
@@ -95,6 +130,7 @@ impl App {
             favorites,
             is_playing: false,
             show_visualizer: true,
+            search: SearchState::new(),
         }
     }
 

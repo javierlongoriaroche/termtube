@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, AppScreen};
 use crate::config::settings::KeybindingSettings;
@@ -28,6 +28,10 @@ pub enum Action {
     QueueRemove,
     AddToQueue,
     ToggleVisualizer,
+    SearchInput(char),
+    SearchBackspace,
+    SearchClear,
+    AddToPlaylist,
     None,
 }
 
@@ -44,6 +48,30 @@ pub fn map_key_event(key: KeyEvent, keybindings: &KeybindingSettings, screen: Ap
             AppScreen::Main => Action::Quit,
             _ => Action::Back,
         };
+    }
+
+    if screen == AppScreen::Search {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('q') => return Action::AddToQueue,
+                KeyCode::Char('f') => return Action::ToggleFavorite,
+                KeyCode::Char('l') => return Action::AddToPlaylist,
+                KeyCode::Char('u') => return Action::SearchClear,
+                _ => {}
+            }
+        }
+
+        if key.code == KeyCode::Backspace {
+            return Action::SearchBackspace;
+        }
+
+        if let KeyCode::Char(c) = key.code {
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT)
+            {
+                return Action::SearchInput(c);
+            }
+        }
     }
 
     // Queue-specific keys (Shift+K/J to reorder, d to remove, a to add)
@@ -110,7 +138,7 @@ pub fn map_key_event(key: KeyEvent, keybindings: &KeybindingSettings, screen: Ap
     if key_str == keybindings.favorite {
         return Action::ToggleFavorite;
     }
-    if key_str == keybindings.search {
+    if key_str == keybindings.search || key_str == keybindings.search_alt {
         return Action::Search;
     }
     if key_str == keybindings.queue {
@@ -206,6 +234,20 @@ mod tests {
         let kb = default_kb();
         let action = map_key_event(make_key(KeyCode::Char(' ')), &kb, AppScreen::Main);
         assert_eq!(action, Action::PlayPause);
+    }
+
+    #[test]
+    fn test_search_alt_key_mapping() {
+        let kb = default_kb();
+        let action = map_key_event(make_key(KeyCode::Char('F')), &kb, AppScreen::Main);
+        assert_eq!(action, Action::Search);
+    }
+
+    #[test]
+    fn test_lowercase_f_still_favorite() {
+        let kb = default_kb();
+        let action = map_key_event(make_key(KeyCode::Char('f')), &kb, AppScreen::Main);
+        assert_eq!(action, Action::ToggleFavorite);
     }
 
     #[test]

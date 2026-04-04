@@ -78,6 +78,8 @@ pub struct KeybindingSettings {
     pub quit: String,
     #[serde(default = "default_search")]
     pub search: String,
+    #[serde(default = "default_search_alt")]
+    pub search_alt: String,
     #[serde(default = "default_queue")]
     pub queue: String,
 }
@@ -154,6 +156,9 @@ fn default_quit() -> String {
 fn default_search() -> String {
     "/".to_string()
 }
+fn default_search_alt() -> String {
+    "F".to_string()
+}
 fn default_queue() -> String {
     "Q".to_string()
 }
@@ -211,6 +216,7 @@ impl Default for KeybindingSettings {
             favorite: default_favorite(),
             quit: default_quit(),
             search: default_search(),
+            search_alt: default_search_alt(),
             queue: default_queue(),
         }
     }
@@ -270,6 +276,7 @@ mod tests {
         assert_eq!(settings.general.preload_count, 5);
         assert_eq!(settings.visualizer.bars, 24);
         assert_eq!(settings.keybindings.quit, "q");
+        assert_eq!(settings.keybindings.search_alt, "F");
         assert_eq!(settings.theme.visualizer_colors.len(), 3);
     }
 
@@ -302,9 +309,7 @@ repeat = "r"
 favorite = "f"
 quit = "q"
 search = "/"
-queue = "Q"
-
-[visualizer]
+        search_alt = "F"
 bars = 24
 fps = 30
 decay = 0.85
@@ -337,6 +342,13 @@ bars = 32
         let settings = Settings::from_str("").unwrap();
         assert_eq!(settings.general.preload_count, 5);
         assert_eq!(settings.visualizer.bars, 24);
+        assert_eq!(settings.keybindings.search_alt, "F");
+    }
+
+    #[test]
+    fn test_default_search_alt() {
+        let settings = Settings::default();
+        assert_eq!(settings.keybindings.search_alt, "F");
     }
 
     #[test]

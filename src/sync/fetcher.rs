@@ -94,6 +94,41 @@ pub async fn fetch_playlist_songs(
     parse_ytdlp_output(&stdout)
 }
 
+/// Search YouTube Music using yt-dlp and return a flat list of results.
+pub async fn search_youtube_music(
+    query: &str,
+    cookies_path: Option<&Path>,
+    limit: usize,
+) -> Result<Vec<Song>, FetchError> {
+    let mut cmd = Command::new("yt-dlp");
+    let search = format!("ytsearch{limit}:{query}");
+
+    cmd.arg("--flat-playlist")
+        .arg("--dump-json")
+        .arg("--no-warnings")
+        .arg("--ignore-errors");
+
+    if let Some(cookies) = cookies_path {
+        cmd.arg("--cookies").arg(cookies);
+    }
+
+    cmd.arg(search);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let output = cmd.output().await.map_err(FetchError::Spawn)?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(FetchError::YtDlpFailed {
+            code: output.status.code().unwrap_or(-1),
+            stderr,
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_ytdlp_output(&stdout)
+}
+
 /// Parse the NDJSON output from yt-dlp (one JSON object per line).
 fn parse_ytdlp_output(output: &str) -> Result<Vec<Song>, FetchError> {
     let mut songs = Vec::new();
