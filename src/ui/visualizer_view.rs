@@ -10,12 +10,7 @@ const BAR_CHARS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '�
 
 /// Render the audio visualizer with frequency bars.
 /// `bar_heights` should contain values in 0.0..=1.0 for each bar.
-pub fn render_visualizer(
-    frame: &mut Frame,
-    area: Rect,
-    bar_heights: &[f64],
-    theme: &Theme,
-) {
+pub fn render_visualizer(frame: &mut Frame, area: Rect, bar_heights: &[f64], theme: &Theme) {
     let block = Block::default()
         .title(" Visualizer ")
         .borders(Borders::ALL)

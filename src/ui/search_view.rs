@@ -39,7 +39,10 @@ impl SearchViewState {
         if self.item_count == 0 {
             return;
         }
-        let i = self.list_state.selected().map_or(0, |i| (i + 1) % self.item_count);
+        let i = self
+            .list_state
+            .selected()
+            .map_or(0, |i| (i + 1) % self.item_count);
         self.list_state.select(Some(i));
     }
 
@@ -47,10 +50,10 @@ impl SearchViewState {
         if self.item_count == 0 {
             return;
         }
-        let i = self
-            .list_state
-            .selected()
-            .map_or(0, |i| if i == 0 { self.item_count - 1 } else { i - 1 });
+        let i =
+            self.list_state
+                .selected()
+                .map_or(0, |i| if i == 0 { self.item_count - 1 } else { i - 1 });
         self.list_state.select(Some(i));
     }
 
@@ -74,7 +77,11 @@ pub fn render_search(
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(2),
+        ])
         .split(area);
 
     let input_block = Block::default()
@@ -115,21 +122,22 @@ pub fn render_search(
         })
         .collect();
 
-    let list = List::new(items)
-        .block(list_block)
-        .highlight_style(
-            Style::default()
-                .bg(theme.highlight_bg)
-                .fg(theme.highlight_fg)
-                .add_modifier(Modifier::BOLD),
-        );
+    let list = List::new(items).block(list_block).highlight_style(
+        Style::default()
+            .bg(theme.highlight_bg)
+            .fg(theme.highlight_fg)
+            .add_modifier(Modifier::BOLD),
+    );
 
     frame.render_stateful_widget(list, chunks[1], &mut state.list_state);
 
     let status = if let Some(msg) = error {
         Line::from(Span::styled(msg, Style::default().fg(theme.secondary)))
     } else if is_loading {
-        Line::from(Span::styled("Searching...", Style::default().fg(theme.primary)))
+        Line::from(Span::styled(
+            "Searching...",
+            Style::default().fg(theme.primary),
+        ))
     } else if let Some(msg) = status {
         Line::from(Span::styled(msg, Style::default().fg(theme.fg_dim)))
     } else if results.is_empty() {
@@ -140,24 +148,60 @@ pub fn render_search(
         };
         Line::from(Span::styled(msg, Style::default().fg(theme.fg_dim)))
     } else if cache_hit {
-        Line::from(Span::styled("Cached results", Style::default().fg(theme.fg_dim)))
+        Line::from(Span::styled(
+            "Cached results",
+            Style::default().fg(theme.fg_dim),
+        ))
     } else {
         Line::from(Span::raw(""))
     };
 
     let playlist_hint = current_playlist_name.unwrap_or("(no playlist)");
     let hints = Line::from(vec![
-        Span::styled(" Enter ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Enter ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("play  ", Style::default().fg(theme.fg_dim)),
-        Span::styled("Up/Down ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Up/Down ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("navigate  ", Style::default().fg(theme.fg_dim)),
-        Span::styled("Ctrl+Q ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Ctrl+Q ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("queue  ", Style::default().fg(theme.fg_dim)),
-        Span::styled("Ctrl+F ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Ctrl+F ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("favorite  ", Style::default().fg(theme.fg_dim)),
-        Span::styled("Ctrl+L ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("add to {playlist_hint}  "), Style::default().fg(theme.fg_dim)),
-        Span::styled("Esc ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Ctrl+L ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("add to {playlist_hint}  "),
+            Style::default().fg(theme.fg_dim),
+        ),
+        Span::styled(
+            "Esc ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("back", Style::default().fg(theme.fg_dim)),
     ]);
 

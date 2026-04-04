@@ -77,10 +77,7 @@ mod tests {
             duration: Some(212),
             artist: "Rick Astley".into(),
         };
-        assert_eq!(
-            song.url(),
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        );
+        assert_eq!(song.url(), "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     }
 
     #[test]

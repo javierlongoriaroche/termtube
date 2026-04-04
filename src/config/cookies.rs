@@ -27,9 +27,9 @@ pub fn validate_cookies_content(content: &str) -> Result<(), CookiesError> {
     // Netscape cookies files typically start with this header line
     // or contain tab-separated fields with domain entries.
     // We check for common markers.
-    let has_netscape_header = content
-        .lines()
-        .any(|line| line.contains("Netscape HTTP Cookie File") || line.contains("HTTP Cookie File"));
+    let has_netscape_header = content.lines().any(|line| {
+        line.contains("Netscape HTTP Cookie File") || line.contains("HTTP Cookie File")
+    });
 
     if has_netscape_header {
         return Ok(());

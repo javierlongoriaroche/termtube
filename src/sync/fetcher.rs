@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::process::Stdio;
 
-use tokio::process::Command;
 use thiserror::Error;
+use tokio::process::Command;
 
 use crate::playlist::models::Song;
 
@@ -31,7 +31,8 @@ struct YtDlpEntry {
 
 impl YtDlpEntry {
     fn artist(&self) -> String {
-        self.uploader.clone()
+        self.uploader
+            .clone()
             .or_else(|| self.channel.clone())
             .unwrap_or_default()
     }

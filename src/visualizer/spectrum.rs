@@ -145,9 +145,7 @@ fn map_to_bars(magnitudes: &[f64], num_bars: usize, sample_rate: u32, num_bins: 
 /// Generate a Hann window of the given size.
 fn hann_window(size: usize) -> Vec<f64> {
     (0..size)
-        .map(|i| {
-            0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (size - 1) as f64).cos())
-        })
+        .map(|i| 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (size - 1) as f64).cos()))
         .collect()
 }
 
@@ -188,7 +186,10 @@ mod tests {
         assert_eq!(bars.len(), 24);
         // At least one bar should have non-trivial energy
         let max_bar = bars.iter().cloned().fold(0.0_f64, f64::max);
-        assert!(max_bar > 0.01, "440Hz sine should produce visible bars, got max={max_bar}");
+        assert!(
+            max_bar > 0.01,
+            "440Hz sine should produce visible bars, got max={max_bar}"
+        );
     }
 
     #[test]

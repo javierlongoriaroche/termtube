@@ -34,12 +34,7 @@ fn format_time(secs: u64) -> String {
 }
 
 /// Render the "Now Playing" panel with track info and progress bar.
-pub fn render_now_playing(
-    frame: &mut Frame,
-    area: Rect,
-    info: &NowPlayingInfo,
-    theme: &Theme,
-) {
+pub fn render_now_playing(frame: &mut Frame, area: Rect, info: &NowPlayingInfo, theme: &Theme) {
     let block = Block::default()
         .title(" Now Playing ")
         .borders(Borders::ALL)
@@ -71,27 +66,19 @@ pub fn render_now_playing(
         ),
         Span::styled(
             info.title.clone(),
-            Style::default()
-                .fg(theme.fg)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
         ),
     ]);
 
     let artist_line = Line::from(vec![
         Span::raw("   "),
         Span::styled(info.artist.clone(), Style::default().fg(theme.secondary)),
-        Span::styled(
-            format!("  {time_str}"),
-            Style::default().fg(theme.fg_dim),
-        ),
+        Span::styled(format!("  {time_str}"), Style::default().fg(theme.fg_dim)),
     ]);
 
     // Render title + artist (use first 2 lines of inner area)
     if inner.height >= 1 {
-        let title_area = Rect {
-            height: 1,
-            ..inner
-        };
+        let title_area = Rect { height: 1, ..inner };
         frame.render_widget(Paragraph::new(title_line), title_area);
     }
 
@@ -113,11 +100,7 @@ pub fn render_now_playing(
         };
 
         let gauge = Gauge::default()
-            .gauge_style(
-                Style::default()
-                    .fg(theme.progress_bar)
-                    .bg(theme.bg),
-            )
+            .gauge_style(Style::default().fg(theme.progress_bar).bg(theme.bg))
             .ratio(ratio)
             .label("");
 

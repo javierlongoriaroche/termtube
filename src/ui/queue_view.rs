@@ -33,7 +33,10 @@ impl QueueViewState {
         if self.item_count == 0 {
             return;
         }
-        let i = self.list_state.selected().map_or(0, |i| (i + 1) % self.item_count);
+        let i = self
+            .list_state
+            .selected()
+            .map_or(0, |i| (i + 1) % self.item_count);
         self.list_state.select(Some(i));
     }
 
@@ -41,10 +44,10 @@ impl QueueViewState {
         if self.item_count == 0 {
             return;
         }
-        let i = self
-            .list_state
-            .selected()
-            .map_or(0, |i| if i == 0 { self.item_count - 1 } else { i - 1 });
+        let i =
+            self.list_state
+                .selected()
+                .map_or(0, |i| if i == 0 { self.item_count - 1 } else { i - 1 });
         self.list_state.select(Some(i));
     }
 
@@ -124,45 +127,60 @@ pub fn render_queue(
             } else {
                 "  "
             };
-            let fav_icon = if queue_ids.get(i).map_or(false, |id| favorite_ids.contains(id)) {
+            let fav_icon = if queue_ids
+                .get(i)
+                .map_or(false, |id| favorite_ids.contains(id))
+            {
                 "♥ "
             } else {
                 "  "
             };
             ListItem::new(Line::from(vec![
-                Span::styled(
-                    playing,
-                    Style::default().fg(theme.primary),
-                ),
-                Span::styled(
-                    fav_icon,
-                    Style::default().fg(theme.secondary),
-                ),
+                Span::styled(playing, Style::default().fg(theme.primary)),
+                Span::styled(fav_icon, Style::default().fg(theme.secondary)),
                 Span::styled(title.clone(), Style::default().fg(theme.fg)),
             ]))
         })
         .collect();
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(
-            Style::default()
-                .bg(theme.highlight_bg)
-                .fg(theme.highlight_fg)
-                .add_modifier(Modifier::BOLD),
-        );
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .bg(theme.highlight_bg)
+            .fg(theme.highlight_fg)
+            .add_modifier(Modifier::BOLD),
+    );
 
     frame.render_stateful_widget(list, chunks[0], &mut state.list_state);
 
     // Key hints
     let hints = Paragraph::new(Line::from(vec![
-        Span::styled(" Shift+K/J ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Shift+K/J ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("move  ", Style::default().fg(theme.fg_dim)),
-        Span::styled("d ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "d ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("remove  ", Style::default().fg(theme.fg_dim)),
-        Span::styled("f ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "f ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("favorite  ", Style::default().fg(theme.fg_dim)),
-        Span::styled("q/Esc ", Style::default().fg(theme.primary).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "q/Esc ",
+            Style::default()
+                .fg(theme.primary)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("back", Style::default().fg(theme.fg_dim)),
     ]));
     frame.render_widget(hints, chunks[1]);

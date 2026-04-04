@@ -75,8 +75,14 @@ mod tests {
 
     #[test]
     fn test_parse_hex_color() {
-        assert_eq!(parse_hex_color("#61afef"), Some(Color::Rgb(0x61, 0xaf, 0xef)));
-        assert_eq!(parse_hex_color("c678dd"), Some(Color::Rgb(0xc6, 0x78, 0xdd)));
+        assert_eq!(
+            parse_hex_color("#61afef"),
+            Some(Color::Rgb(0x61, 0xaf, 0xef))
+        );
+        assert_eq!(
+            parse_hex_color("c678dd"),
+            Some(Color::Rgb(0xc6, 0x78, 0xdd))
+        );
         assert_eq!(parse_hex_color("invalid"), None);
         assert_eq!(parse_hex_color("#fff"), None);
     }

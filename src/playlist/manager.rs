@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::config::playlist::PlaylistEntry;
-use crate::playlist::models::{Playlist, PlaylistIndex, Song};
+use crate::playlist::models::{Playlist, PlaylistIndex};
 use crate::sync::fetcher;
 
 #[derive(Debug, Error)]
@@ -131,7 +131,11 @@ impl PlaylistManager {
                             cached.name,
                             cached.songs.len()
                         );
-                        eprintln!("  ⚠ {} — fetch failed, using cache ({} songs)", entry.name, cached.songs.len());
+                        eprintln!(
+                            "  ⚠ {} — fetch failed, using cache ({} songs)",
+                            entry.name,
+                            cached.songs.len()
+                        );
                         playlists.push(cached);
                     } else {
                         eprintln!("  ✗ {} — {}", entry.name, e);
@@ -146,6 +150,26 @@ impl PlaylistManager {
         Ok(playlists)
     }
 
+    /// Load or synchronize cached playlists for a set of playlist entries.
+    ///
+    /// If the cache contains an entry for every playlist, it returns the cache.
+    /// If any playlist is missing, it synchronizes all playlists and refreshes the
+    /// local cache using `sync_all`.
+    pub async fn load_or_sync_cached_playlists(
+        &self,
+        entries: &[PlaylistEntry],
+        cookies_path: Option<&Path>,
+    ) -> Result<Vec<Playlist>, ManagerError> {
+        self.ensure_dirs()?;
+
+        let cached = self.load_all_cached(entries);
+        if cached.len() == entries.len() {
+            return Ok(cached);
+        }
+
+        self.sync_all(entries, cookies_path).await
+    }
+
     /// Load all playlists from cache (no network). Returns whatever is cached.
     pub fn load_all_cached(&self, entries: &[PlaylistEntry]) -> Vec<Playlist> {
         entries
@@ -158,6 +182,7 @@ impl PlaylistManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::playlist::models::Song;
     use tempfile::TempDir;
 
     fn make_entry(name: &str) -> PlaylistEntry {
@@ -233,5 +258,27 @@ mod tests {
         let loaded = mgr.load_all_cached(&entries);
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "exists");
+    }
+
+    #[tokio::test]
+    async fn test_load_or_sync_cached_playlists_returns_existing_cache_when_complete() {
+        let tmp = TempDir::new().unwrap();
+        let mgr = PlaylistManager::new(tmp.path());
+
+        let playlist_a = make_playlist("a", 2);
+        let playlist_b = make_playlist("b", 3);
+
+        mgr.save_playlist(&playlist_a).unwrap();
+        mgr.save_playlist(&playlist_b).unwrap();
+
+        let entries = vec![make_entry("a"), make_entry("b")];
+        let loaded = mgr
+            .load_or_sync_cached_playlists(&entries, None)
+            .await
+            .unwrap();
+
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded.iter().any(|pl| pl.name == "a"));
+        assert!(loaded.iter().any(|pl| pl.name == "b"));
     }
 }

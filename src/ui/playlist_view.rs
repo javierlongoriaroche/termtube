@@ -138,14 +138,12 @@ pub fn render_sidebar(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(pl_border_color));
 
-    let pl_list = List::new(pl_items)
-        .block(pl_block)
-        .highlight_style(
-            Style::default()
-                .bg(theme.highlight_bg)
-                .fg(theme.highlight_fg)
-                .add_modifier(Modifier::BOLD),
-        );
+    let pl_list = List::new(pl_items).block(pl_block).highlight_style(
+        Style::default()
+            .bg(theme.highlight_bg)
+            .fg(theme.highlight_fg)
+            .add_modifier(Modifier::BOLD),
+    );
 
     frame.render_stateful_widget(pl_list, chunks[0], &mut state.playlist_state);
 
@@ -161,7 +159,10 @@ pub fn render_sidebar(
         .iter()
         .enumerate()
         .map(|(i, title)| {
-            let fav = if song_video_ids.get(i).map_or(false, |id| favorite_ids.contains(id)) {
+            let fav = if song_video_ids
+                .get(i)
+                .map_or(false, |id| favorite_ids.contains(id))
+            {
                 "♥ "
             } else {
                 "  "
@@ -178,14 +179,12 @@ pub fn render_sidebar(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(song_border_color));
 
-    let song_list = List::new(song_items)
-        .block(song_block)
-        .highlight_style(
-            Style::default()
-                .bg(theme.highlight_bg)
-                .fg(theme.highlight_fg)
-                .add_modifier(Modifier::BOLD),
-        );
+    let song_list = List::new(song_items).block(song_block).highlight_style(
+        Style::default()
+            .bg(theme.highlight_bg)
+            .fg(theme.highlight_fg)
+            .add_modifier(Modifier::BOLD),
+    );
 
     frame.render_stateful_widget(song_list, chunks[1], &mut state.song_state);
 }

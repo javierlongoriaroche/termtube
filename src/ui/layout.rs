@@ -32,7 +32,7 @@ impl AppLayout {
         let vertical = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),  // header
+                Constraint::Length(1), // header
                 Constraint::Min(8),    // body
                 Constraint::Length(3), // controls
             ])
@@ -62,7 +62,7 @@ impl MainPanelLayout {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(5), // now playing
-                Constraint::Min(4),   // visualizer
+                Constraint::Min(4),    // visualizer
             ])
             .split(area);
 

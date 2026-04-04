@@ -95,8 +95,13 @@ fn main() {
         Ok(p) => p,
         Err(e) => {
             error!("Error loading playlists: {e}");
-            eprintln!("Error loading playlists from {}: {e}", playlist_path.display());
-            eprintln!("Create a playlist.txt with format: name|https://youtube.com/playlist?list=...");
+            eprintln!(
+                "Error loading playlists from {}: {e}",
+                playlist_path.display()
+            );
+            eprintln!(
+                "Create a playlist.txt with format: name|https://youtube.com/playlist?list=..."
+            );
             process::exit(1);
         }
     };
@@ -118,11 +123,26 @@ fn main() {
 
     let mut app = App::new(settings.clone(), playlists.clone());
 
-    // Load cached playlists on startup
+    // Load cached playlists on startup and sync missing entries.
     let manager = PlaylistManager::new(&PathBuf::from(&settings.general.cache_dir));
-    let cached = manager.load_all_cached(
-        &playlists,
-    );
+    let cookies_path = PathBuf::from(&settings.paths.cookies);
+    let cookies = if cookies_path.exists() {
+        Some(cookies_path.as_path())
+    } else {
+        None
+    };
+
+    let cached = match tokio::runtime::Runtime::new()
+        .expect("failed to create tokio runtime")
+        .block_on(manager.load_or_sync_cached_playlists(&playlists, cookies))
+    {
+        Ok(playlists) => playlists,
+        Err(e) => {
+            warn!("Failed to load or sync cached playlists: {e}");
+            Vec::new()
+        }
+    };
+
     if !cached.is_empty() {
         info!("Loaded {} cached playlist(s)", cached.len());
         app.cached_playlists = cached;
@@ -152,8 +172,7 @@ fn init_logging(log_file: &str) {
         use tracing_subscriber::fmt;
         use tracing_subscriber::EnvFilter;
 
-        let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("info"));
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
         let _ = fmt()
             .with_writer(file)
@@ -177,7 +196,10 @@ fn load_or_create_settings(cli: &Cli) -> Settings {
         match Settings::load(&config_path) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Warning: failed to load config {}: {e}", config_path.display());
+                eprintln!(
+                    "Warning: failed to load config {}: {e}",
+                    config_path.display()
+                );
                 eprintln!("Using default settings.");
                 Settings::default()
             }
@@ -356,7 +378,11 @@ fn run_sync_mode(settings: &Settings, playlists: &[config::playlist::PlaylistEnt
             Ok(synced) => {
                 let total: usize = synced.iter().map(|p| p.songs.len()).sum();
                 eprintln!();
-                eprintln!("Sync complete: {} playlists, {} total songs.", synced.len(), total);
+                eprintln!(
+                    "Sync complete: {} playlists, {} total songs.",
+                    synced.len(),
+                    total
+                );
             }
             Err(e) => {
                 eprintln!("Sync error: {e}");
@@ -390,11 +416,7 @@ fn run_tui(app: &mut App) -> io::Result<()> {
 
     let mut engine = AudioEngine::new();
 
-    let preload_target = app
-        .settings
-        .general
-        .preload_count
-        .max(PRELOAD_SIZE as u8) as usize;
+    let preload_target = app.settings.general.preload_count.max(PRELOAD_SIZE as u8) as usize;
     let cookies_for_preload = {
         let cookies_path = PathBuf::from(&app.settings.paths.cookies);
         if cookies_path.exists() {
@@ -638,7 +660,13 @@ fn handle_action(
                         if app.shuffle {
                             // Shuffle: fill upcoming from a randomized pool (excluding selected)
                             ps.shuffle_pool = build_shuffle_pool(&songs, Some(&song), &ps.upcoming);
-                            fill_upcoming_from_pool(&songs, Some(&song), ps, PRELOAD_SIZE, app.repeat);
+                            fill_upcoming_from_pool(
+                                &songs,
+                                Some(&song),
+                                ps,
+                                PRELOAD_SIZE,
+                                app.repeat,
+                            );
                         } else {
                             // Normal: fill upcoming with the next PRELOAD_SIZE songs after selected
                             ps.shuffle_pool.clear();
@@ -771,11 +799,12 @@ fn handle_action(
                 return;
             }
 
-            let songs: Vec<playlist::models::Song> = if ps.source_playlist < app.cached_playlists.len() {
-                app.cached_playlists[ps.source_playlist].songs.clone()
-            } else {
-                return;
-            };
+            let songs: Vec<playlist::models::Song> =
+                if ps.source_playlist < app.cached_playlists.len() {
+                    app.cached_playlists[ps.source_playlist].songs.clone()
+                } else {
+                    return;
+                };
 
             if songs.is_empty() {
                 return;
@@ -823,7 +852,8 @@ fn handle_action(
                 let download_path = PathBuf::from(&download_dir);
                 match download_song_to_dir(&current_song.url(), &download_path, None) {
                     Ok(_) => {
-                        app.search.status = Some(format!("Started download: {}", current_song.title));
+                        app.search.status =
+                            Some(format!("Started download: {}", current_song.title));
                         app.search.error = None;
                     }
                     Err(e) => {
@@ -839,17 +869,22 @@ fn handle_action(
             if songs.is_empty() {
                 app.search.error = Some("No playlist selected or playlist is empty".to_string());
             } else {
-                let playlist_name = if let Some(pl) = app.cached_playlists.get(app.selected_playlist) {
-                    pl.name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
-                } else {
-                    "playlist".to_string()
-                };
-                let download_dir = shellexpand::tilde(&format!("~/.termtube/downloads/{playlist_name}")).to_string();
+                let playlist_name =
+                    if let Some(pl) = app.cached_playlists.get(app.selected_playlist) {
+                        pl.name
+                            .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+                    } else {
+                        "playlist".to_string()
+                    };
+                let download_dir =
+                    shellexpand::tilde(&format!("~/.termtube/downloads/{playlist_name}"))
+                        .to_string();
                 let download_path = PathBuf::from(&download_dir);
                 let urls: Vec<String> = songs.iter().map(|song| song.url()).collect();
                 match download_playlist_to_dir(&urls, &download_path, None) {
                     Ok(_) => {
-                        app.search.status = Some(format!("Started playlist download: {}", download_dir));
+                        app.search.status =
+                            Some(format!("Started playlist download: {}", download_dir));
                         app.search.error = None;
                     }
                     Err(e) => {
@@ -981,7 +1016,10 @@ fn execute_search(app: &mut App, search_state: &mut SearchViewState) {
     }
 }
 
-fn selected_search_song(app: &App, search_state: &SearchViewState) -> Option<playlist::models::Song> {
+fn selected_search_song(
+    app: &App,
+    search_state: &SearchViewState,
+) -> Option<playlist::models::Song> {
     let idx = search_state.selected()?;
     app.search.results.get(idx).cloned()
 }
@@ -1288,9 +1326,15 @@ fn draw_ui(
 
             let now_playing = match current_song {
                 Some(song) => {
-                    let total_elapsed = playback_start.map(|s| s.elapsed()).unwrap_or(Duration::ZERO);
-                    let current_pause = pause_instant.map(|pi| pi.elapsed()).unwrap_or(Duration::ZERO);
-                    let mut elapsed = total_elapsed.saturating_sub(paused_duration + current_pause).as_secs();
+                    let total_elapsed = playback_start
+                        .map(|s| s.elapsed())
+                        .unwrap_or(Duration::ZERO);
+                    let current_pause = pause_instant
+                        .map(|pi| pi.elapsed())
+                        .unwrap_or(Duration::ZERO);
+                    let mut elapsed = total_elapsed
+                        .saturating_sub(paused_duration + current_pause)
+                        .as_secs();
                     let total = song.duration.unwrap_or(0);
                     // Cap elapsed at song duration
                     if total > 0 && elapsed > total {
@@ -1465,8 +1509,8 @@ mod tests {
     #[tokio::test]
     #[ignore] // Ignorar por defecto, ejecutar manualmente con --ignored
     async fn test_real_youtube_search_with_cookies() {
+        use crate::sync::fetcher::{check_ytdlp, search_youtube_music};
         use std::path::Path;
-        use crate::sync::fetcher::{search_youtube_music, check_ytdlp};
 
         // Verificar que yt-dlp esté disponible
         check_ytdlp().await.expect("yt-dlp debe estar instalado");
@@ -1476,17 +1520,24 @@ mod tests {
         let cookies = if cookies_path.exists() {
             Some(cookies_path)
         } else {
-            panic!("cookies.txt no encontrado. Necesitas un archivo de cookies válido para YouTube.");
+            panic!(
+                "cookies.txt no encontrado. Necesitas un archivo de cookies válido para YouTube."
+            );
         };
 
         // Realizar búsqueda
         let query = "lofi beats";
         let limit = 5;
-        let results = search_youtube_music(query, cookies, limit).await.expect("La búsqueda debe ser exitosa");
+        let results = search_youtube_music(query, cookies, limit)
+            .await
+            .expect("La búsqueda debe ser exitosa");
 
         // Verificar resultados
         assert!(!results.is_empty(), "Debe haber al menos un resultado");
-        assert!(results.len() <= limit, "No debe haber más resultados que el límite");
+        assert!(
+            results.len() <= limit,
+            "No debe haber más resultados que el límite"
+        );
 
         // Verificar que cada canción tenga campos requeridos
         for song in &results {
@@ -1498,8 +1549,13 @@ mod tests {
 
         // Verificar que los resultados sean relevantes (opcional, pero útil)
         let titles_lower: Vec<String> = results.iter().map(|s| s.title.to_lowercase()).collect();
-        let has_relevant = titles_lower.iter().any(|t| t.contains("lofi") || t.contains("beats"));
-        assert!(has_relevant, "Al menos un resultado debe ser relevante para la query");
+        let has_relevant = titles_lower
+            .iter()
+            .any(|t| t.contains("lofi") || t.contains("beats"));
+        assert!(
+            has_relevant,
+            "Al menos un resultado debe ser relevante para la query"
+        );
     }
 
     #[test]
@@ -1531,6 +1587,9 @@ mod tests {
         assert_eq!(app.current_playlist_songs()[0].video_id, "vid1");
 
         let playlist_path = tmp.path().join("cache/playlists/test.json");
-        assert!(playlist_path.exists(), "El playlist cache file debe existir");
+        assert!(
+            playlist_path.exists(),
+            "El playlist cache file debe existir"
+        );
     }
 }

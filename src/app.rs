@@ -82,11 +82,10 @@ impl SearchState {
 
 impl App {
     pub fn new(settings: Settings, playlists: Vec<PlaylistEntry>) -> Self {
-        let favorites_path = PathBuf::from(
-            shellexpand::tilde("~/.termtube/favorites.json").as_ref(),
-        );
-        let favorites = Favorites::load(&favorites_path)
-            .unwrap_or_else(|_| Favorites::empty(favorites_path));
+        let favorites_path =
+            PathBuf::from(shellexpand::tilde("~/.termtube/favorites.json").as_ref());
+        let favorites =
+            Favorites::load(&favorites_path).unwrap_or_else(|_| Favorites::empty(favorites_path));
 
         Self {
             settings,
@@ -113,8 +112,8 @@ impl App {
         playlists: Vec<PlaylistEntry>,
         favorites_path: PathBuf,
     ) -> Self {
-        let favorites = Favorites::load(&favorites_path)
-            .unwrap_or_else(|_| Favorites::empty(favorites_path));
+        let favorites =
+            Favorites::load(&favorites_path).unwrap_or_else(|_| Favorites::empty(favorites_path));
 
         Self {
             settings,
@@ -199,7 +198,11 @@ impl App {
 
     /// Get queue item titles for display.
     pub fn queue_titles(&self) -> Vec<String> {
-        self.queue.items().iter().map(|item| item.title.clone()).collect()
+        self.queue
+            .items()
+            .iter()
+            .map(|item| item.title.clone())
+            .collect()
     }
 
     /// Current queue index (for highlight in queue view).

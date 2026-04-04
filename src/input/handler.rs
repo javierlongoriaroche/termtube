@@ -261,7 +261,10 @@ mod tests {
     #[test]
     fn test_download_current_playlist_mapping() {
         let kb = default_kb();
-        let key = KeyEvent::new(KeyCode::Char('D'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+        let key = KeyEvent::new(
+            KeyCode::Char('D'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
         let action = map_key_event(key, &kb, AppScreen::Main);
         assert_eq!(action, Action::DownloadCurrentPlaylist);
     }
