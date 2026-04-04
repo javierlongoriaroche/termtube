@@ -28,7 +28,7 @@ use tracing::{error, info, warn};
 
 use app::{App, AppScreen};
 use audio::engine::AudioEngine;
-use audio::preloader::Preloader;
+use audio::preloader::{download_playlist_to_dir, download_song_to_dir, Preloader};
 use config::playlist::parse_playlist_file;
 use config::settings::Settings;
 use input::handler::{self, Action};
@@ -544,7 +544,7 @@ fn handle_action(
                 if should_execute_search(&app.search) {
                     execute_search(app, search_state);
                 } else {
-                    play_selected_search(app, search_state, engine, ps);
+                    play_selected_search(app, search_state, sidebar_state, engine, ps);
                 }
                 return;
             }
@@ -741,6 +741,47 @@ fn handle_action(
                 }
             }
         }
+        Action::DownloadCurrentSong => {
+            if let Some(current_song) = ps.current_song.clone() {
+                let download_dir = shellexpand::tilde("~/.termtube/downloads/current").to_string();
+                let download_path = PathBuf::from(&download_dir);
+                match download_song_to_dir(&current_song.url(), &download_path, None) {
+                    Ok(_) => {
+                        app.search.status = Some(format!("Started download: {}", current_song.title));
+                        app.search.error = None;
+                    }
+                    Err(e) => {
+                        app.search.error = Some(format!("Download failed: {e}"));
+                    }
+                }
+            } else {
+                app.search.error = Some("No current song is playing".to_string());
+            }
+        }
+        Action::DownloadCurrentPlaylist => {
+            let songs = app.current_playlist_songs();
+            if songs.is_empty() {
+                app.search.error = Some("No playlist selected or playlist is empty".to_string());
+            } else {
+                let playlist_name = if let Some(pl) = app.cached_playlists.get(app.selected_playlist) {
+                    pl.name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+                } else {
+                    "playlist".to_string()
+                };
+                let download_dir = shellexpand::tilde(&format!("~/.termtube/downloads/{playlist_name}")).to_string();
+                let download_path = PathBuf::from(&download_dir);
+                let urls: Vec<String> = songs.iter().map(|song| song.url()).collect();
+                match download_playlist_to_dir(&urls, &download_path, None) {
+                    Ok(_) => {
+                        app.search.status = Some(format!("Started playlist download: {}", download_dir));
+                        app.search.error = None;
+                    }
+                    Err(e) => {
+                        app.search.error = Some(format!("Playlist download failed: {e}"));
+                    }
+                }
+            }
+        }
         Action::QueueMoveUp => {
             if let Some(idx) = queue_state.move_selection_up() {
                 app.queue.move_up(idx);
@@ -868,10 +909,15 @@ fn selected_search_song(app: &App, search_state: &SearchViewState) -> Option<pla
 fn play_selected_search(
     app: &mut App,
     search_state: &SearchViewState,
+    sidebar_state: &mut PlaylistViewState,
     engine: &mut AudioEngine,
     ps: &mut PlayState,
 ) {
     if let Some(song) = selected_search_song(app, search_state) {
+        add_song_to_selected_playlist(app, &song);
+        let song_count = app.current_playlist_songs().len();
+        sidebar_state.set_song_count(song_count);
+
         ps.history.clear();
         ps.upcoming.clear();
         ps.shuffle_pool.clear();
@@ -1310,6 +1356,8 @@ fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
         Line::from(" Q          Toggle queue view"),
         Line::from(" v          Toggle visualizer / logo"),
         Line::from(" /, F       Search"),
+        Line::from(" Ctrl+D     Download current song"),
+        Line::from(" Ctrl+Shift+D Download current playlist"),
         Line::from(" Search: Enter = search/play, Ctrl+Q queue, Ctrl+F favorite"),
         Line::from(" Search: Ctrl+L add to playlist, Ctrl+U clear"),
         Line::from(" ?          Toggle this help"),
@@ -1328,6 +1376,7 @@ fn render_help(frame: &mut Frame, area: Rect, theme: &Theme) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[tokio::test]
     #[ignore] // Ignorar por defecto, ejecutar manualmente con --ignored
@@ -1367,5 +1416,37 @@ mod tests {
         let titles_lower: Vec<String> = results.iter().map(|s| s.title.to_lowercase()).collect();
         let has_relevant = titles_lower.iter().any(|t| t.contains("lofi") || t.contains("beats"));
         assert!(has_relevant, "Al menos un resultado debe ser relevante para la query");
+    }
+
+    #[test]
+    fn test_add_song_to_selected_playlist_saves_song() {
+        let tmp = TempDir::new().unwrap();
+        let fav_path = tmp.path().join("favorites.json");
+        let mut settings = Settings::default();
+        settings.general.cache_dir = tmp.path().join("cache").display().to_string();
+        let mut app = App::new_with_favorites_path(settings, vec![], fav_path);
+
+        let playlist = playlist::models::Playlist {
+            name: "test".to_string(),
+            url: "https://www.youtube.com/playlist?list=PLtest".to_string(),
+            songs: Vec::new(),
+        };
+        app.cached_playlists.push(playlist);
+        app.selected_playlist = 0;
+
+        let song = playlist::models::Song {
+            title: "Test Song".to_string(),
+            video_id: "vid1".to_string(),
+            duration: Some(180),
+            artist: "Artist".to_string(),
+        };
+
+        add_song_to_selected_playlist(&mut app, &song);
+
+        assert_eq!(app.current_playlist_songs().len(), 1);
+        assert_eq!(app.current_playlist_songs()[0].video_id, "vid1");
+
+        let playlist_path = tmp.path().join("cache/playlists/test.json");
+        assert!(playlist_path.exists(), "El playlist cache file debe existir");
     }
 }

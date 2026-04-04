@@ -2,7 +2,7 @@ use std::collections::{hash_map::DefaultHasher, VecDeque};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
@@ -108,4 +108,57 @@ fn download_to_path(url: &str, path: &Path, cookies: Option<&Path>) -> Result<()
     }
 
     Ok(())
+}
+
+#[derive(Debug, Error)]
+pub enum DownloadError {
+    #[error("failed to create download directory: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("failed to spawn yt-dlp: {0}")]
+    YtdlpSpawn(std::io::Error),
+}
+
+/// Download a single song URL to the target directory in a background process.
+pub fn download_song_to_dir(
+    url: &str,
+    target_dir: &Path,
+    cookies: Option<&Path>,
+) -> Result<PathBuf, DownloadError> {
+    fs::create_dir_all(target_dir)?;
+
+    let output_pattern = target_dir.join("%(title)s-%(id)s.%(ext)s");
+    let mut cmd = Command::new("yt-dlp");
+    cmd.arg("--no-warnings")
+        .arg("--quiet")
+        .arg("-f")
+        .arg("bestaudio")
+        .arg("-o")
+        .arg(output_pattern.as_os_str())
+        .arg(url)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    if let Some(cookies) = cookies {
+        cmd.arg("--cookies").arg(cookies);
+    }
+
+    let _child = cmd.spawn().map_err(DownloadError::YtdlpSpawn)?;
+    Ok(output_pattern)
+}
+
+/// Download multiple song URLs to the target directory in background processes.
+pub fn download_playlist_to_dir(
+    urls: &[String],
+    target_dir: &Path,
+    cookies: Option<&Path>,
+) -> Result<Vec<PathBuf>, DownloadError> {
+    fs::create_dir_all(target_dir)?;
+    let mut paths = Vec::with_capacity(urls.len());
+
+    for url in urls {
+        let path = download_song_to_dir(url, target_dir, cookies)?;
+        paths.push(path);
+    }
+
+    Ok(paths)
 }

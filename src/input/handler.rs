@@ -28,6 +28,8 @@ pub enum Action {
     QueueRemove,
     AddToQueue,
     ToggleVisualizer,
+    DownloadCurrentSong,
+    DownloadCurrentPlaylist,
     SearchInput(char),
     SearchBackspace,
     SearchClear,
@@ -40,6 +42,18 @@ pub fn map_key_event(key: KeyEvent, keybindings: &KeybindingSettings, screen: Ap
     // Global shortcuts (Ctrl+C always quits)
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Action::Quit;
+    }
+
+    // Global download shortcuts
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        let is_shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        match key.code {
+            KeyCode::Char('d') | KeyCode::Char('D') if is_shift => {
+                return Action::DownloadCurrentPlaylist
+            }
+            KeyCode::Char('d') => return Action::DownloadCurrentSong,
+            _ => {}
+        }
     }
 
     // Escape goes back or quits depending on screen
@@ -234,6 +248,22 @@ mod tests {
         let kb = default_kb();
         let action = map_key_event(make_key(KeyCode::Char(' ')), &kb, AppScreen::Main);
         assert_eq!(action, Action::PlayPause);
+    }
+
+    #[test]
+    fn test_download_current_song_mapping() {
+        let kb = default_kb();
+        let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+        let action = map_key_event(key, &kb, AppScreen::Main);
+        assert_eq!(action, Action::DownloadCurrentSong);
+    }
+
+    #[test]
+    fn test_download_current_playlist_mapping() {
+        let kb = default_kb();
+        let key = KeyEvent::new(KeyCode::Char('D'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+        let action = map_key_event(key, &kb, AppScreen::Main);
+        assert_eq!(action, Action::DownloadCurrentPlaylist);
     }
 
     #[test]
