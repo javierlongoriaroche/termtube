@@ -114,13 +114,12 @@ fn main() {
 
     let mut app = App::new(settings.clone(), playlists.clone());
 
-    // Load cached playlists on startup
+    // Load cached playlists on startup. If no cached playlist metadata exists,
+    // sync playlists automatically so the user can see songs on first launch.
     let manager = PlaylistManager::new(&PathBuf::from(&settings.general.cache_dir));
-    let cached = manager.load_all_cached(
-        &playlists,
-    );
+    let cached = load_or_sync_cached_playlists(&settings, &playlists, &manager);
     if !cached.is_empty() {
-        info!("Loaded {} cached playlist(s)", cached.len());
+        info!("Loaded {} playlist(s)", cached.len());
         app.cached_playlists = cached;
     }
 
@@ -184,8 +183,10 @@ fn load_or_create_settings(cli: &Cli) -> Settings {
         settings
     };
 
-    // CLI argument overrides
-    if let Some(cookies) = &cli.cookies {
+    // Forzar cookies.txt en entorno de desarrollo
+    if std::env::var("RUST_ENV").map(|v| v == "development").unwrap_or(false) {
+        settings.paths.cookies = "./cookies.txt".to_string();
+    } else if let Some(cookies) = &cli.cookies {
         settings.paths.cookies = cookies.display().to_string();
     }
     if let Some(playlists) = &cli.playlists {
@@ -288,6 +289,48 @@ fn run_sync_mode(settings: &Settings, playlists: &[config::playlist::PlaylistEnt
             }
         }
     });
+}
+
+fn load_or_sync_cached_playlists(
+    settings: &Settings,
+    playlists: &[config::playlist::PlaylistEntry],
+    manager: &PlaylistManager,
+) -> Vec<playlist::models::Playlist> {
+    let cached = manager.load_all_cached(playlists);
+    if !cached.is_empty() {
+        return cached;
+    }
+
+    info!("No cached playlists found; syncing playlist metadata on startup.");
+
+    let cookies_path = PathBuf::from(&settings.paths.cookies);
+    let cookies = if cookies_path.exists() {
+        Some(cookies_path.as_path())
+    } else {
+        None
+    };
+
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    let synced = rt.block_on(async {
+        if sync::fetcher::check_ytdlp().await.is_err() {
+            warn!("yt-dlp not available; cannot sync playlists on startup.");
+            return Vec::new();
+        }
+
+        match manager.sync_all(playlists, cookies).await {
+            Ok(playlists) => playlists,
+            Err(e) => {
+                warn!("Failed to sync playlists on startup: {e}");
+                Vec::new()
+            }
+        }
+    });
+
+    if synced.is_empty() {
+        warn!("Starting without playlist metadata. Run `termtube --sync` to populate cache.");
+    }
+
+    synced
 }
 
 fn run_tui(app: &mut App) -> io::Result<()> {
