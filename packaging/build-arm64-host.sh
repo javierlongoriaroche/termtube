@@ -100,9 +100,9 @@ fi
 cp "$STRIP_BIN" "$TMPDIR/squashfs-root/usr/bin/strip"
 chmod +x "$TMPDIR/squashfs-root/usr/bin/strip"
 
-if [[ -f "$ROOT/packaging/libbfd-2.35.2-arm64.so" ]]; then
+if [[ -f "$TMPDIR/libbfd-2.35.2-arm64.so" ]]; then
   mkdir -p "$TMPDIR/squashfs-root/usr/lib"
-  cp "$ROOT/packaging/libbfd-2.35.2-arm64.so" "$TMPDIR/squashfs-root/usr/lib/"
+  cp "$TMPDIR/libbfd-2.35.2-arm64.so" "$TMPDIR/squashfs-root/usr/lib/"
   export LD_LIBRARY_PATH="$TMPDIR/squashfs-root/usr/lib:${LD_LIBRARY_PATH:-}"
 fi
 

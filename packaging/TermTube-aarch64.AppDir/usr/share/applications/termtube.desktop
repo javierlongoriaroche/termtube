@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=TermTube
+Exec=termtube
+Icon=termtube
+Terminal=true
+Categories=Audio;AudioVideo;
