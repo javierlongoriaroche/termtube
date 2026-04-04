@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -33,6 +33,7 @@ pub struct AudioEngine {
     stop_flag: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     decode_finished: Arc<AtomicBool>,
+    volume: Arc<AtomicU32>,
     stream: Option<cpal::Stream>,
     worker: Option<thread::JoinHandle<()>>,
     target_sample_rate: u32,
@@ -47,11 +48,23 @@ impl AudioEngine {
             stop_flag: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             decode_finished: Arc::new(AtomicBool::new(false)),
+            volume: Arc::new(AtomicU32::new(100)),
             stream: None,
             worker: None,
             target_sample_rate: 48_000,
             target_channels: 2,
         }
+    }
+
+    /// Set the playback volume as a percentage [0..=100].
+    pub fn set_volume(&self, percent: u8) {
+        self.volume
+            .store(percent.min(100) as u32, Ordering::Relaxed);
+    }
+
+    /// Current playback volume percent.
+    pub fn volume_percent(&self) -> u8 {
+        self.volume.load(Ordering::Relaxed).min(100) as u8
     }
 
     pub fn play_url(&mut self, url: &str, cookies: Option<&Path>) -> Result<(), AudioEngineError> {
@@ -73,10 +86,34 @@ impl AudioEngine {
         let paused_flag = Arc::clone(&self.paused);
 
         let stream = match default_config.sample_format() {
-            SampleFormat::F32 => build_output_stream::<f32>(&device, &stream_config, playback_buffer, paused_flag),
-            SampleFormat::I16 => build_output_stream::<i16>(&device, &stream_config, playback_buffer, paused_flag),
-            SampleFormat::U16 => build_output_stream::<u16>(&device, &stream_config, playback_buffer, paused_flag),
-            _ => build_output_stream::<f32>(&device, &stream_config, playback_buffer, paused_flag),
+            SampleFormat::F32 => build_output_stream::<f32>(
+                &device,
+                &stream_config,
+                playback_buffer,
+                paused_flag,
+                Arc::clone(&self.volume),
+            ),
+            SampleFormat::I16 => build_output_stream::<i16>(
+                &device,
+                &stream_config,
+                playback_buffer,
+                paused_flag,
+                Arc::clone(&self.volume),
+            ),
+            SampleFormat::U16 => build_output_stream::<u16>(
+                &device,
+                &stream_config,
+                playback_buffer,
+                paused_flag,
+                Arc::clone(&self.volume),
+            ),
+            _ => build_output_stream::<f32>(
+                &device,
+                &stream_config,
+                playback_buffer,
+                paused_flag,
+                Arc::clone(&self.volume),
+            ),
         }?;
 
         stream.play()?;
@@ -180,6 +217,7 @@ fn build_output_stream<T: SizedSample + cpal::FromSample<f32>>(
     config: &cpal::StreamConfig,
     playback_buffer: Arc<Mutex<VecDeque<f32>>>,
     paused: Arc<AtomicBool>,
+    volume: Arc<AtomicU32>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError> {
     let channels = config.channels as usize;
 
@@ -194,6 +232,7 @@ fn build_output_stream<T: SizedSample + cpal::FromSample<f32>>(
                 return;
             }
 
+            let volume_factor = volume.load(Ordering::Relaxed) as f32 / 100.0;
             let mut buffer = match playback_buffer.lock() {
                 Ok(b) => b,
                 Err(poisoned) => poisoned.into_inner(),
@@ -201,7 +240,7 @@ fn build_output_stream<T: SizedSample + cpal::FromSample<f32>>(
 
             for frame in data.chunks_mut(channels) {
                 for sample in frame.iter_mut() {
-                    let value = buffer.pop_front().unwrap_or(0.0);
+                    let value = buffer.pop_front().unwrap_or(0.0) * volume_factor;
                     *sample = T::from_sample(value);
                 }
             }
@@ -402,5 +441,27 @@ fn push_samples(buffer: &Arc<Mutex<VecDeque<f32>>>, samples: &[f32], max_len: us
             buffer.pop_front();
         }
         buffer.push_back(sample);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_audio_engine_default_volume() {
+        let engine = AudioEngine::new();
+        assert_eq!(engine.volume_percent(), 100);
+    }
+
+    #[test]
+    fn test_audio_engine_set_volume_clamps() {
+        let engine = AudioEngine::new();
+        engine.set_volume(120);
+        assert_eq!(engine.volume_percent(), 100);
+        engine.set_volume(0);
+        assert_eq!(engine.volume_percent(), 0);
+        engine.set_volume(55);
+        assert_eq!(engine.volume_percent(), 55);
     }
 }

@@ -11,7 +11,7 @@ mod visualizer;
 use std::collections::VecDeque;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{Duration, Instant};
 
@@ -74,19 +74,23 @@ fn main() {
     init_logging(&settings.general.log_file);
     info!("TermTube v{} starting", env!("CARGO_PKG_VERSION"));
 
-    // Validate cookies if file exists
     let cookies_path = PathBuf::from(&settings.paths.cookies);
+    let playlist_path = PathBuf::from(&settings.paths.playlists);
+
+    if let Err(e) = validate_startup_paths(&cookies_path, &playlist_path) {
+        error!("Startup validation failed: {e}");
+        eprintln!("{e}");
+        process::exit(1);
+    }
+
     if cookies_path.exists() {
         match config::cookies::validate_cookies_file(&cookies_path) {
             Ok(_) => info!("Cookies file validated: {}", cookies_path.display()),
             Err(e) => warn!("Cookies warning: {e}"),
         }
-    } else {
-        info!("No cookies file at {}. Private playlists may not work.", cookies_path.display());
     }
 
     // Load playlists
-    let playlist_path = PathBuf::from(&settings.paths.playlists);
     let playlists = match parse_playlist_file(&playlist_path) {
         Ok(p) => p,
         Err(e) => {
@@ -239,7 +243,8 @@ fn first_run_wizard(config_path: &PathBuf) -> Settings {
     eprintln!("  Next steps:");
     eprintln!("  1. Create a playlist.txt with your YouTube playlists:");
     eprintln!("     lofi|https://www.youtube.com/playlist?list=PLxxxxxxx");
-    eprintln!("  2. (Optional) Export cookies.txt for private playlists");
+    eprintln!("  2. Place cookies.txt at ~/.termtube/cookies.txt before launching TermTube.");
+    eprintln!("     Cookies are required to start the app.");
     eprintln!("  3. Run: termtube --sync  (to download playlist metadata)");
     eprintln!("  4. Run: termtube         (to start the player)");
     eprintln!();
@@ -248,6 +253,77 @@ fn first_run_wizard(config_path: &PathBuf) -> Settings {
 }
 
 /// Run --sync mode: check yt-dlp, sync all playlists, then exit.
+fn validate_startup_paths(cookies_path: &Path, playlist_path: &Path) -> Result<(), String> {
+    let mut errors = Vec::new();
+
+    if !cookies_path.exists() {
+        errors.push(format!(
+            "Cookies are required to start TermTube. Place cookies.txt in {} or update paths.cookies in config.toml.",
+            cookies_path.display()
+        ));
+    }
+
+    if !playlist_path.exists() {
+        errors.push(format!(
+            "Playlist file not found: {}. Create a playlist.txt with format: name|https://youtube.com/playlist?list=... at this location.",
+            playlist_path.display()
+        ));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod startup_validation_tests {
+    use super::*;
+    use std::fs::File;
+    use std::path::PathBuf;
+
+    fn temp_file_name(prefix: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("termtube_test_{}_{}.txt", prefix, nanos));
+        path
+    }
+
+    #[test]
+    fn test_validate_startup_paths_missing_cookies() {
+        let cookies_path = temp_file_name("cookies");
+        let playlist_path = temp_file_name("playlist");
+        File::create(&playlist_path).unwrap();
+
+        let result = validate_startup_paths(&cookies_path, &playlist_path);
+
+        assert!(result.is_err());
+        let message = result.unwrap_err();
+        assert!(message.contains("Cookies are required to start TermTube"));
+
+        let _ = fs::remove_file(&playlist_path);
+    }
+
+    #[test]
+    fn test_validate_startup_paths_both_exist() {
+        let cookies_path = temp_file_name("cookies");
+        let playlist_path = temp_file_name("playlist");
+        File::create(&cookies_path).unwrap();
+        File::create(&playlist_path).unwrap();
+
+        let result = validate_startup_paths(&cookies_path, &playlist_path);
+
+        assert!(result.is_ok());
+
+        let _ = fs::remove_file(&cookies_path);
+        let _ = fs::remove_file(&playlist_path);
+    }
+}
+
 fn run_sync_mode(settings: &Settings, playlists: &[config::playlist::PlaylistEntry]) {
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
@@ -826,6 +902,10 @@ fn handle_action(
             app.search.clear_status();
             search_state.set_count(0);
         }
+        Action::VolumeUp | Action::VolumeDown => {
+            handler::apply_action(app, action);
+            engine.set_volume(app.volume);
+        }
         other => handler::apply_action(app, other),
     }
 }
@@ -1093,6 +1173,8 @@ fn play_song(
     song: &playlist::models::Song,
     ps: &mut PlayState,
 ) {
+    engine.set_volume(app.volume);
+
     let cookies_path = PathBuf::from(&app.settings.paths.cookies);
     let cookies = if cookies_path.exists() {
         Some(cookies_path.as_path())
