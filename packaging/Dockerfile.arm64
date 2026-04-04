@@ -1,0 +1,19 @@
+FROM --platform=linux/arm64 ghcr.io/rust-lang/rust:1.94-slim-bullseye
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    xz-utils \
+    pkg-config \
+    libasound2-dev \
+    fuse \
+    libfuse2 \
+    squashfs-tools \
+    file \
+    ca-certificates \
+    git \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add aarch64-unknown-linux-gnu
+
+WORKDIR /workspace
