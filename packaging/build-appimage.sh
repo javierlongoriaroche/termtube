@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_ARCH="${TARGET_ARCH:-x86_64}"
+LINUXDEPLOY_ARCH="${LINUXDEPLOY_ARCH:-$TARGET_ARCH}"
+SKIP_BUILD="${SKIP_BUILD:-false}"
+SKIP_PACKAGE="${SKIP_PACKAGE:-false}"
 YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
 
 case "$TARGET_ARCH" in
@@ -10,16 +13,27 @@ case "$TARGET_ARCH" in
     BUILD_TRIPLE="x86_64-unknown-linux-gnu"
     OUTPUT="$ROOT/termtube-x86_64.AppImage"
     FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-    LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
     ;;
   aarch64)
     BUILD_TRIPLE="aarch64-unknown-linux-gnu"
     OUTPUT="$ROOT/termtube-aarch64.AppImage"
     FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"
-    LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage"
     ;;
   *)
     echo "Unsupported TARGET_ARCH: $TARGET_ARCH" >&2
+    exit 1
+    ;;
+esac
+
+case "$LINUXDEPLOY_ARCH" in
+  x86_64)
+    LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+    ;;
+  aarch64)
+    LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage"
+    ;;
+  *)
+    echo "Unsupported LINUXDEPLOY_ARCH: $LINUXDEPLOY_ARCH" >&2
     exit 1
     ;;
 esac
@@ -28,10 +42,22 @@ BUILD_BINARY="$ROOT/target/$BUILD_TRIPLE/release/termtube"
 APPDIR="$ROOT/packaging/TermTube-${TARGET_ARCH}.AppDir"
 ARTIFACT_DIR="$ROOT/packaging/artifacts"
 
-if [[ ! -f "$BUILD_BINARY" ]]; then
-  echo "Building TermTube release binary for target $BUILD_TRIPLE..."
-  rustup target add "$BUILD_TRIPLE"
-  cargo build --release --target "$BUILD_TRIPLE"
+if [[ "$SKIP_BUILD" != "true" ]]; then
+  if [[ ! -f "$BUILD_BINARY" ]]; then
+    echo "Building TermTube release binary for target $BUILD_TRIPLE..."
+    rustup target add "$BUILD_TRIPLE"
+    cargo build --release --target "$BUILD_TRIPLE"
+  fi
+else
+  if [[ ! -f "$BUILD_BINARY" ]]; then
+    echo "SKIP_BUILD is set, but binary $BUILD_BINARY does not exist." >&2
+    exit 1
+  fi
+fi
+
+if [[ "$SKIP_PACKAGE" == "true" ]]; then
+  echo "SKIP_PACKAGE is set, skipping AppImage packaging. Binary is available at $BUILD_BINARY"
+  exit 0
 fi
 
 rm -rf "$APPDIR"
@@ -72,11 +98,15 @@ TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "Downloading yt-dlp..."
-curl -L --fail -o "$APPDIR/usr/bin/yt-dlp" "$YTDLP_URL"
+if ! curl -L --fail --retry 5 --retry-delay 2 -o "$APPDIR/usr/bin/yt-dlp" "$YTDLP_URL"; then
+  echo "GitHub download failed; installing yt-dlp via pip fallback..."
+  python3 -m pip install --prefix "$TMPDIR/yt-dlp" yt-dlp
+  cp "$TMPDIR/yt-dlp/bin/yt-dlp" "$APPDIR/usr/bin/yt-dlp"
+fi
 chmod +x "$APPDIR/usr/bin/yt-dlp"
 
 echo "Downloading ffmpeg static build..."
-curl -L --fail -o "$TMPDIR/ffmpeg.tar.xz" "$FFMPEG_URL"
+curl -L --fail --retry 5 --retry-delay 2 -o "$TMPDIR/ffmpeg.tar.xz" "$FFMPEG_URL"
 
 echo "Extracting ffmpeg..."
 mkdir -p "$TMPDIR/extract"
@@ -96,7 +126,7 @@ chmod +x "$TMPDIR/linuxdeploy-${TARGET_ARCH}.AppImage"
 cd "$ARTIFACT_DIR"
 
 echo "Packaging AppImage..."
-"$TMPDIR/linuxdeploy-${TARGET_ARCH}.AppImage" \
+"$TMPDIR/linuxdeploy-${TARGET_ARCH}.AppImage" --appimage-extract-and-run \
   --appdir "$APPDIR" \
   --executable "$APPDIR/usr/bin/termtube" \
   --desktop-file "$APPDIR/termtube.desktop" \

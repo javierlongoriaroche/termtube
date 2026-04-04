@@ -77,6 +77,16 @@ bash packaging/build-appimage.sh
 TARGET_ARCH=aarch64 bash packaging/build-appimage.sh
 ```
 
+### Build ARM64 with Docker
+
+If you don't have a native ARM64 machine, you can build the ARM64 AppImage from an x86_64 host using Docker and Buildx:
+
+```bash
+bash packaging/build-arm64-docker.sh
+```
+
+This will build an ARM64 container image, then run the AppImage packaging process inside that container.
+
 ## Quick Start
 
 1. **Create a playlist file** (`playlist.txt`):
