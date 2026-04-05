@@ -89,10 +89,8 @@ Terminal=true
 Categories=Audio;AudioVideo;
 EOF
 
-base64 -d > "$APPDIR/usr/share/icons/hicolor/256x256/apps/termtube.png" <<'EOF'
-iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAA
-SUVORK5CYII=
-EOF
+cp "$ROOT/logo.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/termtube.png"
+cp "$ROOT/logo.png" "$APPDIR/termtube.png"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
