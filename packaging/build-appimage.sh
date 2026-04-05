@@ -43,11 +43,9 @@ APPDIR="$ROOT/packaging/TermTube-${TARGET_ARCH}.AppDir"
 ARTIFACT_DIR="$ROOT/packaging/artifacts"
 
 if [[ "$SKIP_BUILD" != "true" ]]; then
-  if [[ ! -f "$BUILD_BINARY" ]]; then
-    echo "Building TermTube release binary for target $BUILD_TRIPLE..."
-    rustup target add "$BUILD_TRIPLE"
-    cargo build --release --target "$BUILD_TRIPLE"
-  fi
+  echo "Building TermTube release binary for target $BUILD_TRIPLE..."
+  rustup target add "$BUILD_TRIPLE"
+  cargo build --release --target "$BUILD_TRIPLE"
 else
   if [[ ! -f "$BUILD_BINARY" ]]; then
     echo "SKIP_BUILD is set, but binary $BUILD_BINARY does not exist." >&2
