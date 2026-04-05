@@ -3,3 +3,5 @@
 *cookies.txt
 playlist.txt
 .github
+*.AppImage
+*.deb
