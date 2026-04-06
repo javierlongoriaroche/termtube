@@ -473,6 +473,7 @@ fn run_tui(app: &mut App) -> io::Result<()> {
 const PRELOAD_SIZE: usize = 5;
 const SEARCH_LIMIT: usize = 10;
 const SEARCH_CACHE_TTL_SECS: u64 = 600;
+const VISUALIZER_SAMPLE_CHUNK: usize = 2048;
 
 /// State for the preloaded playback queue.
 struct PlayState {
@@ -552,7 +553,7 @@ fn main_loop(
         }
 
         // Grab visualizer samples from the audio engine
-        let vis_samples = engine.take_visualizer_samples(4096);
+        let vis_samples = engine.take_visualizer_samples(VISUALIZER_SAMPLE_CHUNK);
 
         if ps.current_song.is_some() && ps.playback_start.is_none() && engine.playback_started() {
             ps.playback_start = Some(Instant::now());
