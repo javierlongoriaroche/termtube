@@ -29,6 +29,7 @@ pub enum Action {
     AddToQueue,
     ToggleVisualizer,
     DownloadCurrentSong,
+    DownloadSelectedItem,
     DownloadCurrentPlaylist,
     SearchInput(char),
     SearchBackspace,
@@ -51,7 +52,7 @@ pub fn map_key_event(key: KeyEvent, keybindings: &KeybindingSettings, screen: Ap
         if is_alt {
             return Action::DownloadCurrentPlaylist;
         }
-        return Action::DownloadCurrentSong;
+        return Action::DownloadSelectedItem;
     }
 
     // Escape goes back or quits depending on screen
@@ -249,11 +250,11 @@ mod tests {
     }
 
     #[test]
-    fn test_download_current_song_mapping() {
+    fn test_download_selected_item_mapping() {
         let kb = default_kb();
         let key = KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT);
         let action = map_key_event(key, &kb, AppScreen::Main);
-        assert_eq!(action, Action::DownloadCurrentSong);
+        assert_eq!(action, Action::DownloadSelectedItem);
     }
 
     #[test]

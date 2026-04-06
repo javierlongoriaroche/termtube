@@ -30,7 +30,7 @@ use tracing::{error, info, warn};
 
 use app::{App, AppScreen, PlaybackSource};
 use audio::engine::AudioEngine;
-use audio::preloader::{download_playlist_to_dir_async, download_song_to_dir_async, Preloader};
+use audio::preloader::{download_song_to_dir_async, Preloader};
 use config::playlist::parse_playlist_file;
 use config::settings::Settings;
 use input::handler::{self, Action};
@@ -524,6 +524,9 @@ impl PlayState {
 }
 
 enum DownloadNotification {
+    Started {
+        video_id: String,
+    },
     Completed {
         video_id: String,
         local_path: PathBuf,
@@ -547,33 +550,105 @@ fn find_downloaded_file(target_dir: &Path, video_id: &str) -> Option<PathBuf> {
 
 fn handle_download_notification(app: &mut App, manager: &PlaylistManager, notification: DownloadNotification) {
     match notification {
+        DownloadNotification::Started { video_id } => {
+            let mut title: Option<String> = None;
+            for playlist in &mut app.cached_playlists {
+                for song in playlist.songs.iter_mut().filter(|s| s.video_id == video_id) {
+                    song.download_status = Some(playlist::models::DownloadStatus::Downloading);
+                    if title.is_none() {
+                        title = Some(song.title.clone());
+                    }
+                }
+            }
+            if let Some(title) = title {
+                app.search.status = Some(format!("Downloading: {}", title));
+                app.search.error = None;
+            }
+        }
         DownloadNotification::Completed { video_id, local_path } => {
+            let mut title: Option<String> = None;
             for playlist in &mut app.cached_playlists {
                 let mut changed = false;
                 for song in playlist.songs.iter_mut().filter(|s| s.video_id == video_id) {
                     song.download_status = None;
                     song.local_path = Some(local_path.to_string_lossy().to_string());
+                    title = Some(song.title.clone());
                     changed = true;
                 }
                 if changed {
                     let _ = manager.save_playlist(playlist);
                 }
+            }
+            if let Some(title) = title {
+                app.search.status = Some(format!("Downloaded: {}", title));
+                app.search.error = None;
             }
         }
         DownloadNotification::Failed { video_id, error } => {
             for playlist in &mut app.cached_playlists {
-                let mut changed = false;
                 for song in playlist.songs.iter_mut().filter(|s| s.video_id == video_id) {
                     song.download_status = None;
-                    changed = true;
-                }
-                if changed {
-                    let _ = manager.save_playlist(playlist);
-                    app.search.error = Some(format!("Download failed: {error}"));
                 }
             }
+            app.search.error = Some(format!("Download failed: {error}"));
         }
     }
+}
+
+fn spawn_sequential_playlist_download(
+    urls: Vec<String>,
+    song_ids: Vec<String>,
+    target_dir: PathBuf,
+    cookies: Option<PathBuf>,
+    download_tx: Sender<DownloadNotification>,
+) -> Result<(), String> {
+    fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+    thread::spawn(move || {
+        for (video_id, url) in song_ids.into_iter().zip(urls.into_iter()) {
+            let _ = download_tx.send(DownloadNotification::Started {
+                video_id: video_id.clone(),
+            });
+
+            match download_song_to_dir_async(&url, &target_dir, cookies.as_deref()) {
+                Ok(handle) => match handle.join_handle.join() {
+                    Ok(Ok(_)) => {
+                        if let Some(local_path) = find_downloaded_file(&target_dir, &video_id) {
+                            let _ = download_tx.send(DownloadNotification::Completed {
+                                video_id: video_id.clone(),
+                                local_path,
+                            });
+                        } else {
+                            let _ = download_tx.send(DownloadNotification::Failed {
+                                video_id: video_id.clone(),
+                                error: "Download finished but file not found".to_string(),
+                            });
+                        }
+                    }
+                    Ok(Err(err)) => {
+                        let _ = download_tx.send(DownloadNotification::Failed {
+                            video_id: video_id.clone(),
+                            error: err.to_string(),
+                        });
+                    }
+                    Err(_) => {
+                        let _ = download_tx.send(DownloadNotification::Failed {
+                            video_id: video_id.clone(),
+                            error: "Download thread panicked".to_string(),
+                        });
+                    }
+                },
+                Err(err) => {
+                    let _ = download_tx.send(DownloadNotification::Failed {
+                        video_id: video_id.clone(),
+                        error: err.to_string(),
+                    });
+                }
+            }
+
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    });
+    Ok(())
 }
 
 fn main_loop(
@@ -943,6 +1018,132 @@ fn handle_action(
                 }
             }
         }
+        Action::DownloadSelectedItem => {
+            if sidebar_state.focus == SidebarFocus::Songs {
+                if let Some(song_idx) = sidebar_state.selected_song() {
+                    let songs = app.current_playlist_songs().to_vec();
+                    if let Some(selected_song) = songs.get(song_idx).cloned() {
+                        for playlist in app.cached_playlists.iter_mut() {
+                            for song in playlist
+                                .songs
+                                .iter_mut()
+                                .filter(|s| s.video_id == selected_song.video_id)
+                            {
+                                song.download_status =
+                                    Some(playlist::models::DownloadStatus::Downloading);
+                            }
+                        }
+                        let download_dir =
+                            shellexpand::tilde("~/.termtube/downloads/current").to_string();
+                        let download_path = PathBuf::from(&download_dir);
+                        let video_id = selected_song.video_id.clone();
+                        match download_song_to_dir_async(&selected_song.url(), &download_path, None)
+                        {
+                            Ok(handle) => {
+                                let tx = download_tx.clone();
+                                thread::spawn(move || {
+                                    let result = handle.join_handle.join();
+                                    match result {
+                                        Ok(Ok(_output_pattern)) => {
+                                            if let Some(local_path) =
+                                                find_downloaded_file(&download_path, &video_id)
+                                            {
+                                                let _ = tx.send(DownloadNotification::Completed {
+                                                    video_id,
+                                                    local_path,
+                                                });
+                                            } else {
+                                                let _ = tx.send(DownloadNotification::Failed {
+                                                    video_id,
+                                                    error: "Download finished but file not found"
+                                                        .to_string(),
+                                                });
+                                            }
+                                        }
+                                        Ok(Err(err)) => {
+                                            let _ = tx.send(DownloadNotification::Failed {
+                                                video_id,
+                                                error: err.to_string(),
+                                            });
+                                        }
+                                        Err(_) => {
+                                            let _ = tx.send(DownloadNotification::Failed {
+                                                video_id,
+                                                error: "Download thread panicked".to_string(),
+                                            });
+                                        }
+                                    }
+                                });
+                                app.search.status =
+                                    Some(format!("Started download: {}", selected_song.title));
+                                app.search.error = None;
+                            }
+                            Err(e) => {
+                                app.search.error = Some(format!("Download failed: {e}"));
+                            }
+                        }
+                    } else {
+                        app.search.error = Some("No song selected for download".to_string());
+                    }
+                } else {
+                    app.search.error = Some("No song selected for download".to_string());
+                }
+            } else {
+                if let Some(selected_playlist_idx) = sidebar_state.selected_playlist() {
+                    if let Some(playlist) = app.cached_playlists.get(selected_playlist_idx) {
+                        if playlist.songs.is_empty() {
+                            app.search.error =
+                                Some("Selected playlist is empty".to_string());
+                        } else {
+                            let playlist_name = playlist
+                                .name
+                                .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+                            let download_dir = shellexpand::tilde(&format!(
+                                "~/.termtube/downloads/{playlist_name}"
+                            ))
+                            .to_string();
+                            let download_path = PathBuf::from(&download_dir);
+                            let urls: Vec<String> = playlist.songs.iter().map(|song| song.url()).collect();
+                            let song_ids: Vec<String> = playlist
+                                .songs
+                                .iter()
+                                .map(|song| song.video_id.clone())
+                                .collect();
+                            let cookies_path = PathBuf::from(&app.settings.paths.cookies);
+                            let cookies = if cookies_path.exists() {
+                                Some(cookies_path)
+                            } else {
+                                None
+                            };
+                            let tx = download_tx.clone();
+                            match spawn_sequential_playlist_download(
+                                urls,
+                                song_ids,
+                                download_path.clone(),
+                                cookies,
+                                tx,
+                            ) {
+                                Ok(()) => {
+                                    app.search.status = Some(format!(
+                                        "Started playlist download: {}",
+                                        download_dir
+                                    ));
+                                    app.search.error = None;
+                                }
+                                Err(e) => {
+                                    app.search.error =
+                                        Some(format!("Playlist download failed: {e}"));
+                                }
+                            }
+                        }
+                    } else {
+                        app.search.error = Some("No playlist selected for download".to_string());
+                    }
+                } else {
+                    app.search.error = Some("No playlist selected for download".to_string());
+                }
+            }
+        }
         Action::DownloadCurrentSong => {
             if let Some(current_song) = ps.current_song.clone() {
                 for playlist in app.cached_playlists.iter_mut() {
@@ -1016,57 +1217,22 @@ fn handle_action(
                         .to_string();
                 let download_path = PathBuf::from(&download_dir);
                 let urls: Vec<String> = songs.iter().map(|song| song.url()).collect();
-                for song in app
-                    .cached_playlists
-                    .get_mut(app.selected_playlist)
-                    .into_iter()
-                    .flat_map(|pl| pl.songs.iter_mut())
-                {
-                    song.download_status = Some(playlist::models::DownloadStatus::Downloading);
-                }
-                match download_playlist_to_dir_async(&urls, &download_path, None) {
-                    Ok(handles) => {
-                        let tx = download_tx.clone();
-                        for (song_id, handle) in songs
-                            .into_iter()
-                            .map(|song| song.video_id)
-                            .zip(handles.into_iter())
-                        {
-                            let tx = tx.clone();
-                            let download_path = download_path.clone();
-                            thread::spawn(move || {
-                                let result = handle.join_handle.join();
-                                match result {
-                                    Ok(Ok(_output_pattern)) => {
-                                        if let Some(local_path) =
-                                            find_downloaded_file(&download_path, &song_id)
-                                        {
-                                            let _ = tx.send(DownloadNotification::Completed {
-                                                video_id: song_id,
-                                                local_path,
-                                            });
-                                        } else {
-                                            let _ = tx.send(DownloadNotification::Failed {
-                                                video_id: song_id,
-                                                error: "Download finished but file not found".to_string(),
-                                            });
-                                        }
-                                    }
-                                    Ok(Err(err)) => {
-                                        let _ = tx.send(DownloadNotification::Failed {
-                                            video_id: song_id,
-                                            error: err.to_string(),
-                                        });
-                                    }
-                                    Err(_) => {
-                                        let _ = tx.send(DownloadNotification::Failed {
-                                            video_id: song_id,
-                                            error: "Download thread panicked".to_string(),
-                                        });
-                                    }
-                                }
-                            });
-                        }
+                let song_ids: Vec<String> = songs.into_iter().map(|song| song.video_id).collect();
+                let cookies_path = PathBuf::from(&app.settings.paths.cookies);
+                let cookies = if cookies_path.exists() {
+                    Some(cookies_path)
+                } else {
+                    None
+                };
+                let tx = download_tx.clone();
+                match spawn_sequential_playlist_download(
+                    urls,
+                    song_ids,
+                    download_path.clone(),
+                    cookies,
+                    tx,
+                ) {
+                    Ok(()) => {
                         app.search.status = Some(format!(
                             "Started playlist download: {}",
                             download_dir
@@ -1856,6 +2022,108 @@ mod tests {
         assert!(
             playlist_path.exists(),
             "El playlist cache file debe existir"
+        );
+    }
+
+    #[test]
+    fn test_download_selected_item_playlist_focus_with_empty_playlist_sets_error() {
+        let tmp = TempDir::new().unwrap();
+        let fav_path = tmp.path().join("favorites.json");
+        let mut settings = Settings::default();
+        settings.general.cache_dir = tmp.path().join("cache").display().to_string();
+        let mut app = App::new_with_favorites_path(settings.clone(), vec![], fav_path);
+        let manager = PlaylistManager::new(&tmp.path().join("cache"));
+
+        app.cached_playlists.push(playlist::models::Playlist {
+            name: "empty".to_string(),
+            url: "https://www.youtube.com/playlist?list=PLempty".to_string(),
+            songs: Vec::new(),
+        });
+        app.selected_playlist = 0;
+
+        let mut sidebar_state = PlaylistViewState::new();
+        sidebar_state.focus = SidebarFocus::Playlists;
+        sidebar_state.set_playlist_count(1);
+
+        let mut queue_state = QueueViewState::new();
+        let mut search_state = SearchViewState::new();
+        let mut engine = AudioEngine::new();
+        let mut ps = PlayState::new();
+        let (tx, _rx) = std::sync::mpsc::channel();
+
+        handle_action(
+            &mut app,
+            &manager,
+            Action::DownloadSelectedItem,
+            &mut sidebar_state,
+            &mut queue_state,
+            &mut search_state,
+            &mut engine,
+            &mut ps,
+            &None,
+            &tx,
+            0,
+        );
+
+        assert_eq!(app.search.error.as_deref(), Some("Selected playlist is empty"));
+    }
+
+    #[test]
+    fn test_handle_download_notification_started_and_completed_updates_song_local_path() {
+        let tmp = TempDir::new().unwrap();
+        let fav_path = tmp.path().join("favorites.json");
+        let mut settings = Settings::default();
+        settings.general.cache_dir = tmp.path().join("cache").display().to_string();
+        let mut app = App::new_with_favorites_path(settings.clone(), vec![], fav_path);
+        let manager = PlaylistManager::new(&tmp.path().join("cache"));
+
+        let playlist = playlist::models::Playlist {
+            name: "test".to_string(),
+            url: "https://www.youtube.com/playlist?list=PLtest".to_string(),
+            songs: vec![playlist::models::Song {
+                title: "Test Song".to_string(),
+                video_id: "vid1".to_string(),
+                duration: Some(120),
+                artist: "Artist".to_string(),
+                local_path: None,
+                download_status: None,
+            }],
+        };
+        app.cached_playlists.push(playlist);
+
+        handle_download_notification(
+            &mut app,
+            &manager,
+            DownloadNotification::Started {
+                video_id: "vid1".to_string(),
+            },
+        );
+        assert_eq!(
+            app.cached_playlists[0].songs[0].download_status,
+            Some(playlist::models::DownloadStatus::Downloading)
+        );
+
+        let local_path = tmp.path().join("downloaded.mp3");
+        std::fs::write(&local_path, "data").unwrap();
+        handle_download_notification(
+            &mut app,
+            &manager,
+            DownloadNotification::Completed {
+                video_id: "vid1".to_string(),
+                local_path: local_path.clone(),
+            },
+        );
+
+        assert_eq!(app.cached_playlists[0].songs[0].download_status, None);
+        assert_eq!(
+            app.cached_playlists[0].songs[0].local_path.as_deref(),
+            Some(local_path.to_string_lossy().as_ref())
+        );
+
+        let loaded = manager.load_cached("test").unwrap().unwrap();
+        assert_eq!(
+            loaded.songs[0].local_path.as_deref(),
+            Some(local_path.to_string_lossy().as_ref())
         );
     }
 
