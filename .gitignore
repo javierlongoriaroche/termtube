@@ -5,4 +5,4 @@ playlist.txt
 .github
 *.AppImage
 *.deb
-/packaging
+packaging
