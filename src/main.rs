@@ -490,6 +490,10 @@ struct PlayState {
     next_linear_index: usize,
     /// Remaining shuffled indices for the current shuffle cycle.
     shuffle_pool: VecDeque<usize>,
+    /// Optional playback error message shown in the UI.
+    error_message: Option<String>,
+    /// Deadline when the playback error message should expire.
+    error_message_deadline: Option<Instant>,
 }
 
 impl PlayState {
@@ -504,6 +508,8 @@ impl PlayState {
             source_playlist: 0,
             next_linear_index: 0,
             shuffle_pool: VecDeque::new(),
+            error_message: None,
+            error_message_deadline: None,
         }
     }
 }
@@ -554,6 +560,19 @@ fn main_loop(
         // Grab visualizer samples from the audio engine
         let vis_samples = engine.take_visualizer_samples(4096);
 
+        if let Some(deadline) = ps.error_message_deadline {
+            if Instant::now() >= deadline {
+                ps.error_message = None;
+                ps.error_message_deadline = None;
+                if let Some(next_song) = ps.upcoming.pop_front() {
+                    refill_upcoming(app, &mut ps, 1);
+                    preload_upcoming(preloader, &ps.upcoming, preload_target);
+                    play_song(app, engine, &next_song, &mut ps);
+                    sync_sidebar_selection(app, sidebar_state, &next_song);
+                }
+            }
+        }
+
         // Draw
         terminal.draw(|frame| {
             draw_ui(
@@ -568,6 +587,7 @@ fn main_loop(
                 ps.playback_start,
                 ps.paused_duration,
                 ps.pause_instant,
+                &ps.error_message,
                 &vis_samples,
             );
         })?;
@@ -690,7 +710,7 @@ fn handle_action(
             } else {
                 // Switch playlist
                 if let Some(idx) = sidebar_state.selected_playlist() {
-                    app.selected_playlist = idx;
+                    update_selected_playlist(app, ps, idx);
                     let song_count = app.current_playlist_songs().len();
                     sidebar_state.set_song_count(song_count);
                 }
@@ -1099,6 +1119,24 @@ fn sync_sidebar_selection(
     }
 }
 
+fn update_selected_playlist(app: &mut App, ps: &mut PlayState, idx: usize) {
+    if app.selected_playlist == idx {
+        return;
+    }
+
+    app.selected_playlist = idx;
+    ps.upcoming.clear();
+    ps.shuffle_pool.clear();
+    ps.history.clear();
+    ps.error_message = None;
+    ps.error_message_deadline = None;
+
+    if ps.current_song.is_none() {
+        ps.source_playlist = idx;
+        ps.next_linear_index = 0;
+    }
+}
+
 /// Build a shuffled pool of indices excluding the current song and upcoming entries.
 fn build_shuffle_pool(
     songs: &[playlist::models::Song],
@@ -1227,19 +1265,27 @@ fn play_song(
         Ok(()) => {
             app.is_playing = true;
             ps.current_song = Some(song.clone());
-            ps.playback_start = Some(Instant::now());
-            ps.paused_duration = Duration::ZERO;
-            ps.pause_instant = None;
-        }
-        Err(e) => {
-            error!("Failed to play {}: {e}", song.title);
-            app.is_playing = false;
-            ps.current_song = None;
             ps.playback_start = None;
             ps.paused_duration = Duration::ZERO;
             ps.pause_instant = None;
+            ps.error_message = None;
+            ps.error_message_deadline = None;
+        }
+        Err(e) => {
+            error!("Failed to play {}: {e}", song.title);
+            set_playback_error(app, ps, "Sorry, can't play this song :´-(".to_string());
         }
     }
+}
+
+fn set_playback_error(app: &mut App, ps: &mut PlayState, message: String) {
+    app.is_playing = false;
+    ps.current_song = None;
+    ps.playback_start = None;
+    ps.paused_duration = Duration::ZERO;
+    ps.pause_instant = None;
+    ps.error_message = Some(message);
+    ps.error_message_deadline = Some(Instant::now() + Duration::from_secs(2));
 }
 
 fn draw_ui(
@@ -1254,6 +1300,7 @@ fn draw_ui(
     playback_start: Option<Instant>,
     paused_duration: Duration,
     pause_instant: Option<Instant>,
+    error_message: &Option<String>,
     vis_samples: &[f32],
 ) {
     let layout = AppLayout::new(frame.area());
@@ -1324,31 +1371,41 @@ fn draw_ui(
         _ => {
             let mp_layout = MainPanelLayout::new(layout.main_panel);
 
-            let now_playing = match current_song {
-                Some(song) => {
-                    let total_elapsed = playback_start
-                        .map(|s| s.elapsed())
-                        .unwrap_or(Duration::ZERO);
-                    let current_pause = pause_instant
-                        .map(|pi| pi.elapsed())
-                        .unwrap_or(Duration::ZERO);
-                    let mut elapsed = total_elapsed
-                        .saturating_sub(paused_duration + current_pause)
-                        .as_secs();
-                    let total = song.duration.unwrap_or(0);
-                    // Cap elapsed at song duration
-                    if total > 0 && elapsed > total {
-                        elapsed = total;
-                    }
-                    NowPlayingInfo {
-                        title: song.title.clone(),
-                        artist: song.artist.clone(),
-                        elapsed_secs: elapsed,
-                        total_secs: total,
-                        is_playing: app.is_playing,
-                    }
+            let now_playing = if let Some(error_message) = error_message.as_ref() {
+                NowPlayingInfo {
+                    title: error_message.clone(),
+                    artist: String::new(),
+                    elapsed_secs: 0,
+                    total_secs: 0,
+                    is_playing: false,
                 }
-                None => NowPlayingInfo::empty(),
+            } else {
+                match current_song {
+                    Some(song) => {
+                        let total_elapsed = playback_start
+                            .map(|s| s.elapsed())
+                            .unwrap_or(Duration::ZERO);
+                        let current_pause = pause_instant
+                            .map(|pi| pi.elapsed())
+                            .unwrap_or(Duration::ZERO);
+                        let mut elapsed = total_elapsed
+                            .saturating_sub(paused_duration + current_pause)
+                            .as_secs();
+                        let total = song.duration.unwrap_or(0);
+                        // Cap elapsed at song duration
+                        if total > 0 && elapsed > total {
+                            elapsed = total;
+                        }
+                        NowPlayingInfo {
+                            title: song.title.clone(),
+                            artist: song.artist.clone(),
+                            elapsed_secs: elapsed,
+                            total_secs: total,
+                            is_playing: app.is_playing,
+                        }
+                    }
+                    None => NowPlayingInfo::empty(),
+                }
             };
             ui::now_playing::render_now_playing(frame, mp_layout.now_playing, &now_playing, theme);
 
@@ -1593,5 +1650,80 @@ mod tests {
             playlist_path.exists(),
             "El playlist cache file debe existir"
         );
+    }
+
+    #[test]
+    fn test_playstate_initializes_without_error() {
+        let ps = PlayState::new();
+
+        assert!(ps.error_message.is_none());
+        assert!(ps.error_message_deadline.is_none());
+    }
+
+    #[test]
+    fn test_set_playback_error_resets_playback_state_and_sets_error_message() {
+        let tmp = TempDir::new().unwrap();
+        let fav_path = tmp.path().join("favorites.json");
+        let settings = Settings::default();
+        let mut app = App::new_with_favorites_path(settings, vec![], fav_path);
+        let mut ps = PlayState::new();
+        ps.current_song = Some(playlist::models::Song {
+            title: "Bad Song".to_string(),
+            video_id: "badid".to_string(),
+            duration: Some(100),
+            artist: "Artist".to_string(),
+        });
+        ps.playback_start = Some(Instant::now());
+        ps.paused_duration = Duration::from_secs(10);
+        ps.pause_instant = Some(Instant::now());
+        app.is_playing = true;
+
+        set_playback_error(&mut app, &mut ps, "Sorry, can't play this song :´-(".to_string());
+
+        assert!(!app.is_playing);
+        assert!(ps.current_song.is_none());
+        assert!(ps.playback_start.is_none());
+        assert_eq!(ps.error_message.as_deref(), Some("Sorry, can't play this song :´-("));
+        assert!(ps.error_message_deadline.is_some());
+    }
+
+    #[test]
+    fn test_update_selected_playlist_clears_preload_state() {
+        let tmp = TempDir::new().unwrap();
+        let fav_path = tmp.path().join("favorites.json");
+        let settings = Settings::default();
+        let mut app = App::new_with_favorites_path(settings, vec![], fav_path);
+        app.selected_playlist = 0;
+
+        let mut ps = PlayState::new();
+        ps.upcoming.push_back(playlist::models::Song {
+            title: "Next".to_string(),
+            video_id: "nextid".to_string(),
+            duration: Some(120),
+            artist: "Artist".to_string(),
+        });
+        ps.shuffle_pool.push_back(1);
+        ps.history.push(playlist::models::Song {
+            title: "Prev".to_string(),
+            video_id: "previd".to_string(),
+            duration: Some(100),
+            artist: "Artist".to_string(),
+        });
+        ps.current_song = None;
+        ps.source_playlist = 0;
+        ps.next_linear_index = 4;
+        ps.error_message = Some("boom".to_string());
+        ps.error_message_deadline = Some(Instant::now() + Duration::from_secs(1));
+
+        update_selected_playlist(&mut app, &mut ps, 2);
+
+        assert_eq!(app.selected_playlist, 2);
+        assert!(ps.upcoming.is_empty());
+        assert!(ps.shuffle_pool.is_empty());
+        assert!(ps.history.is_empty());
+        assert!(ps.error_message.is_none());
+        assert!(ps.error_message_deadline.is_none());
+        assert_eq!(ps.source_playlist, 2);
+        assert_eq!(ps.next_linear_index, 0);
     }
 }
