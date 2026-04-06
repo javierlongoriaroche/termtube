@@ -5,3 +5,5 @@ playlist.txt
 .github
 *.AppImage
 *.deb
+Cargo.lock
+/packaging
