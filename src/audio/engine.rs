@@ -33,6 +33,7 @@ pub struct AudioEngine {
     stop_flag: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     decode_finished: Arc<AtomicBool>,
+    playback_started: Arc<AtomicBool>,
     volume: Arc<AtomicU32>,
     stream: Option<cpal::Stream>,
     worker: Option<thread::JoinHandle<()>>,
@@ -48,6 +49,7 @@ impl AudioEngine {
             stop_flag: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             decode_finished: Arc::new(AtomicBool::new(false)),
+            playback_started: Arc::new(AtomicBool::new(false)),
             volume: Arc::new(AtomicU32::new(100)),
             stream: None,
             worker: None,
@@ -67,10 +69,16 @@ impl AudioEngine {
         self.volume.load(Ordering::Relaxed).min(100) as u8
     }
 
+    /// Whether the audio engine has started producing playback samples for the current track.
+    pub fn playback_started(&self) -> bool {
+        self.playback_started.load(Ordering::Relaxed)
+    }
+
     pub fn play_url(&mut self, url: &str, cookies: Option<&Path>) -> Result<(), AudioEngineError> {
         self.stop();
         self.paused.store(false, Ordering::Relaxed);
         self.decode_finished.store(false, Ordering::Relaxed);
+        self.playback_started.store(false, Ordering::Relaxed);
 
         let host = cpal::default_host();
         let device = host
@@ -126,6 +134,7 @@ impl AudioEngine {
         let cookies = cookies.map(|p| p.to_path_buf());
         let playback_buffer = Arc::clone(&self.playback_buffer);
         let visualizer_buffer = Arc::clone(&self.visualizer_buffer);
+        let playback_started = Arc::clone(&self.playback_started);
         let target_sample_rate = self.target_sample_rate;
         let target_channels = self.target_channels;
         let decode_finished = Arc::clone(&self.decode_finished);
@@ -139,6 +148,7 @@ impl AudioEngine {
                 playback_buffer,
                 visualizer_buffer,
                 stop_flag,
+                playback_started,
             ) {
                 tracing::error!("audio decode loop error: {err}");
             }
@@ -184,6 +194,7 @@ impl AudioEngine {
 
     pub fn stop(&mut self) {
         self.stop_flag.store(true, Ordering::Relaxed);
+        self.playback_started.store(false, Ordering::Relaxed);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -258,6 +269,7 @@ fn decode_loop(
     playback_buffer: Arc<Mutex<VecDeque<f32>>>,
     visualizer_buffer: Arc<Mutex<VecDeque<f32>>>,
     stop_flag: Arc<AtomicBool>,
+    playback_started: Arc<AtomicBool>,
 ) -> Result<(), std::io::Error> {
     let (mut ytdlp, mut ffmpeg) =
         spawn_pipeline(url, cookies, target_sample_rate, target_channels)?;
@@ -345,7 +357,6 @@ fn decode_loop(
             samples.push(s as f32 / 32768.0);
         }
 
-        total_samples += samples.len() as u64;
         if !first_logged && !samples.is_empty() {
             tracing::info!(
                 "first audio data: {} PCM samples ({}Hz {}ch s16le via ffmpeg)",
@@ -354,8 +365,10 @@ fn decode_loop(
                 target_channels
             );
             first_logged = true;
+            playback_started.store(true, Ordering::Relaxed);
         }
 
+        total_samples += samples.len() as u64;
         push_samples(&playback_buffer, &samples, pb_max);
         push_samples(&visualizer_buffer, &samples, vis_max);
     }
@@ -463,5 +476,17 @@ mod tests {
         assert_eq!(engine.volume_percent(), 0);
         engine.set_volume(55);
         assert_eq!(engine.volume_percent(), 55);
+    }
+
+    #[test]
+    fn test_audio_engine_playback_started_flag() {
+        let mut engine = AudioEngine::new();
+        assert!(!engine.playback_started());
+
+        engine.playback_started.store(true, Ordering::Relaxed);
+        assert!(engine.playback_started());
+
+        engine.stop();
+        assert!(!engine.playback_started());
     }
 }

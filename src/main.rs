@@ -554,6 +554,10 @@ fn main_loop(
         // Grab visualizer samples from the audio engine
         let vis_samples = engine.take_visualizer_samples(4096);
 
+        if ps.current_song.is_some() && ps.playback_start.is_none() && engine.playback_started() {
+            ps.playback_start = Some(Instant::now());
+        }
+
         // Draw
         terminal.draw(|frame| {
             draw_ui(
@@ -1227,7 +1231,7 @@ fn play_song(
         Ok(()) => {
             app.is_playing = true;
             ps.current_song = Some(song.clone());
-            ps.playback_start = Some(Instant::now());
+            ps.playback_start = None;
             ps.paused_duration = Duration::ZERO;
             ps.pause_instant = None;
         }
