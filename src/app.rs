@@ -24,6 +24,11 @@ pub enum RepeatMode {
     All,
 }
 
+pub enum PlaybackSource {
+    Local(PathBuf),
+    Remote(String),
+}
+
 /// Central application state.
 pub struct App {
     pub settings: Settings,
@@ -209,6 +214,32 @@ impl App {
     pub fn queue_current_index(&self) -> Option<usize> {
         self.queue.current_index()
     }
+
+    pub fn effective_playback_source(&self, song: &Song) -> PlaybackSource {
+        if let Some(path) = &song.local_path {
+            let path = PathBuf::from(path);
+            if path.exists() {
+                return PlaybackSource::Local(path);
+            }
+        }
+        PlaybackSource::Remote(song.url())
+    }
+
+    pub fn ensure_local_path_exists(&mut self, song: &mut Song) {
+        if let Some(path) = &song.local_path {
+            if !PathBuf::from(path).exists() {
+                song.local_path = None;
+            }
+        }
+    }
+
+    pub fn validate_current_playlist_local_paths(&mut self) {
+        for playlist in &mut self.cached_playlists {
+            for song in &mut playlist.songs {
+                song.validate_local_path();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -301,6 +332,8 @@ mod tests {
                 video_id: "vid1".into(),
                 duration: Some(120),
                 artist: "Artist".into(),
+                local_path: None,
+                download_status: None,
             }],
         });
         app.selected_playlist = 0;
@@ -316,6 +349,8 @@ mod tests {
             video_id: "abc123".into(),
             duration: Some(180),
             artist: "Test".into(),
+            local_path: None,
+            download_status: None,
         };
         app.add_to_queue(&song);
         assert_eq!(app.queue.len(), 1);
@@ -346,12 +381,16 @@ mod tests {
                     video_id: "a".into(),
                     duration: Some(100),
                     artist: "".into(),
+                    local_path: None,
+                    download_status: None,
                 },
                 Song {
                     title: "Song B".into(),
                     video_id: "b".into(),
                     duration: Some(200),
                     artist: "".into(),
+                    local_path: None,
+                    download_status: None,
                 },
             ],
         });

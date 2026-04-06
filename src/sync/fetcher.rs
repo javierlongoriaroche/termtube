@@ -148,6 +148,8 @@ fn parse_ytdlp_output(output: &str) -> Result<Vec<Song>, FetchError> {
             video_id: entry.id,
             duration: entry.duration.map(|d| d as u64),
             artist,
+            local_path: None,
+            download_status: None,
         });
     }
 

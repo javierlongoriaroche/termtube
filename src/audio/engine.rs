@@ -290,8 +290,8 @@ fn decode_loop(
         })
     });
 
-    // Capture yt-dlp stderr for diagnostics
-    let ytdlp_stderr = ytdlp.stderr.take();
+    // Capture yt-dlp stderr for diagnostics if yt-dlp was spawned.
+    let ytdlp_stderr = ytdlp.as_mut().and_then(|child| child.stderr.take());
     let ytdlp_stderr_handle = ytdlp_stderr.map(|se| {
         thread::spawn(move || {
             use std::io::BufRead;
@@ -375,8 +375,10 @@ fn decode_loop(
 
     let _ = ffmpeg.kill();
     let _ = ffmpeg.wait();
-    let _ = ytdlp.kill();
-    let _ = ytdlp.wait();
+    if let Some(mut ytdlp) = ytdlp {
+        let _ = ytdlp.kill();
+        let _ = ytdlp.wait();
+    }
     if let Some(h) = stderr_handle {
         let _ = h.join();
     }
@@ -387,57 +389,83 @@ fn decode_loop(
     Ok(())
 }
 
-/// Spawns yt-dlp piped into ffmpeg. ffmpeg decodes any audio format to raw PCM s16le.
+/// Spawns yt-dlp piped into ffmpeg, or runs ffmpeg directly for local file paths.
+/// ffmpeg decodes any audio format to raw PCM s16le.
 fn spawn_pipeline(
     url: &str,
     cookies: Option<&Path>,
     sample_rate: u32,
     channels: usize,
-) -> Result<(Child, Child), std::io::Error> {
-    let mut ytdlp_cmd = Command::new("yt-dlp");
-    ytdlp_cmd
-        .arg("--no-warnings")
-        .arg("--quiet")
-        .arg("-f")
-        .arg("bestaudio/best")
-        .arg("-o")
-        .arg("-");
+) -> Result<(Option<Child>, Child), std::io::Error> {
+    let local_file = Path::new(url).exists() || url.starts_with("file://");
+    if local_file {
+        let file_path = url.strip_prefix("file://").unwrap_or(url);
+        let ffmpeg = Command::new("ffmpeg")
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .arg("-i")
+            .arg(file_path)
+            .arg("-f")
+            .arg("s16le")
+            .arg("-acodec")
+            .arg("pcm_s16le")
+            .arg("-ar")
+            .arg(sample_rate.to_string())
+            .arg("-ac")
+            .arg(channels.to_string())
+            .arg("pipe:1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
 
-    if let Some(path) = cookies {
-        ytdlp_cmd.arg("--cookies").arg(path);
+        Ok((None, ffmpeg))
+    } else {
+        let mut ytdlp_cmd = Command::new("yt-dlp");
+        ytdlp_cmd
+            .arg("--no-warnings")
+            .arg("--quiet")
+            .arg("-f")
+            .arg("bestaudio/best")
+            .arg("-o")
+            .arg("-");
+
+        if let Some(path) = cookies {
+            ytdlp_cmd.arg("--cookies").arg(path);
+        }
+
+        ytdlp_cmd
+            .arg(url)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut ytdlp = ytdlp_cmd.spawn()?;
+        let ytdlp_stdout = ytdlp.stdout.take().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "yt-dlp stdout not captured")
+        })?;
+
+        let ffmpeg = Command::new("ffmpeg")
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .arg("-i")
+            .arg("pipe:0")
+            .arg("-f")
+            .arg("s16le")
+            .arg("-acodec")
+            .arg("pcm_s16le")
+            .arg("-ar")
+            .arg(sample_rate.to_string())
+            .arg("-ac")
+            .arg(channels.to_string())
+            .arg("pipe:1")
+            .stdin(ytdlp_stdout)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        Ok((Some(ytdlp), ffmpeg))
     }
-
-    ytdlp_cmd
-        .arg(url)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut ytdlp = ytdlp_cmd.spawn()?;
-    let ytdlp_stdout = ytdlp.stdout.take().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "yt-dlp stdout not captured")
-    })?;
-
-    let ffmpeg = Command::new("ffmpeg")
-        .arg("-hide_banner")
-        .arg("-loglevel")
-        .arg("error")
-        .arg("-i")
-        .arg("pipe:0")
-        .arg("-f")
-        .arg("s16le")
-        .arg("-acodec")
-        .arg("pcm_s16le")
-        .arg("-ar")
-        .arg(sample_rate.to_string())
-        .arg("-ac")
-        .arg(channels.to_string())
-        .arg("pipe:1")
-        .stdin(ytdlp_stdout)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    Ok((ytdlp, ffmpeg))
 }
 
 fn push_samples(buffer: &Arc<Mutex<VecDeque<f32>>>, samples: &[f32], max_len: usize) {

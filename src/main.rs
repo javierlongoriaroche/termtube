@@ -13,6 +13,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -26,9 +28,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use tracing::{error, info, warn};
 
-use app::{App, AppScreen};
+use app::{App, AppScreen, PlaybackSource};
 use audio::engine::AudioEngine;
-use audio::preloader::{download_playlist_to_dir, download_song_to_dir, Preloader};
+use audio::preloader::{download_playlist_to_dir_async, download_song_to_dir_async, Preloader};
 use config::playlist::parse_playlist_file;
 use config::settings::Settings;
 use input::handler::{self, Action};
@@ -146,9 +148,10 @@ fn main() {
     if !cached.is_empty() {
         info!("Loaded {} cached playlist(s)", cached.len());
         app.cached_playlists = cached;
+        app.validate_current_playlist_local_paths();
     }
 
-    if let Err(e) = run_tui(&mut app) {
+    if let Err(e) = run_tui(&mut app, &manager) {
         error!("TUI error: {e}");
         eprintln!("Error: {e}");
         process::exit(1);
@@ -392,7 +395,7 @@ fn run_sync_mode(settings: &Settings, playlists: &[config::playlist::PlaylistEnt
     });
 }
 
-fn run_tui(app: &mut App) -> io::Result<()> {
+fn run_tui(app: &mut App, manager: &PlaylistManager) -> io::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
@@ -415,6 +418,8 @@ fn run_tui(app: &mut App) -> io::Result<()> {
     );
 
     let mut engine = AudioEngine::new();
+
+    let (download_tx, download_rx) = mpsc::channel::<DownloadNotification>();
 
     let preload_target = app.settings.general.preload_count.max(PRELOAD_SIZE as u8) as usize;
     let cookies_for_preload = {
@@ -444,6 +449,7 @@ fn run_tui(app: &mut App) -> io::Result<()> {
     let result = main_loop(
         &mut terminal,
         app,
+        manager,
         &theme,
         tick_rate,
         &mut sidebar_state,
@@ -452,6 +458,8 @@ fn run_tui(app: &mut App) -> io::Result<()> {
         &mut spectrum,
         &mut engine,
         &preloader,
+        &download_tx,
+        &download_rx,
         preload_target,
     );
 
@@ -515,9 +523,63 @@ impl PlayState {
     }
 }
 
+enum DownloadNotification {
+    Completed {
+        video_id: String,
+        local_path: PathBuf,
+    },
+    Failed {
+        video_id: String,
+        error: String,
+    },
+}
+
+fn find_downloaded_file(target_dir: &Path, video_id: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(target_dir).ok()?;
+    for entry in entries.flatten() {
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if file_name.contains(video_id) {
+            return Some(entry.path());
+        }
+    }
+    None
+}
+
+fn handle_download_notification(app: &mut App, manager: &PlaylistManager, notification: DownloadNotification) {
+    match notification {
+        DownloadNotification::Completed { video_id, local_path } => {
+            for playlist in &mut app.cached_playlists {
+                let mut changed = false;
+                for song in playlist.songs.iter_mut().filter(|s| s.video_id == video_id) {
+                    song.download_status = None;
+                    song.local_path = Some(local_path.to_string_lossy().to_string());
+                    changed = true;
+                }
+                if changed {
+                    let _ = manager.save_playlist(playlist);
+                }
+            }
+        }
+        DownloadNotification::Failed { video_id, error } => {
+            for playlist in &mut app.cached_playlists {
+                let mut changed = false;
+                for song in playlist.songs.iter_mut().filter(|s| s.video_id == video_id) {
+                    song.download_status = None;
+                    changed = true;
+                }
+                if changed {
+                    let _ = manager.save_playlist(playlist);
+                    app.search.error = Some(format!("Download failed: {error}"));
+                }
+            }
+        }
+    }
+}
+
 fn main_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
+    manager: &PlaylistManager,
     theme: &Theme,
     tick_rate: Duration,
     sidebar_state: &mut PlaylistViewState,
@@ -526,6 +588,8 @@ fn main_loop(
     spectrum: &mut SpectrumAnalyzer,
     engine: &mut AudioEngine,
     preloader: &Option<Preloader>,
+    download_tx: &Sender<DownloadNotification>,
+    download_rx: &Receiver<DownloadNotification>,
     preload_target: usize,
 ) -> io::Result<()> {
     let mut last_tick = Instant::now();
@@ -537,7 +601,7 @@ fn main_loop(
             info!("Song finished, auto-advancing");
             if app.repeat == app::RepeatMode::One {
                 if let Some(song) = ps.current_song.clone() {
-                    play_song(app, engine, &song, &mut ps);
+                    play_song(app, manager, engine, &song, &mut ps);
                     sync_sidebar_selection(app, sidebar_state, &song);
                 }
             } else if let Some(next_song) = ps.upcoming.pop_front() {
@@ -547,7 +611,7 @@ fn main_loop(
                 refill_upcoming(app, &mut ps, 1);
                 preload_upcoming(preloader, &ps.upcoming, preload_target);
                 let song_ref = next_song.clone();
-                play_song(app, engine, &next_song, &mut ps);
+                play_song(app, manager, engine, &next_song, &mut ps);
                 sync_sidebar_selection(app, sidebar_state, &song_ref);
             } else {
                 // No more songs — stop
@@ -572,10 +636,14 @@ fn main_loop(
                 if let Some(next_song) = ps.upcoming.pop_front() {
                     refill_upcoming(app, &mut ps, 1);
                     preload_upcoming(preloader, &ps.upcoming, preload_target);
-                    play_song(app, engine, &next_song, &mut ps);
+                    play_song(app, manager, engine, &next_song, &mut ps);
                     sync_sidebar_selection(app, sidebar_state, &next_song);
                 }
             }
+        }
+
+        while let Ok(notification) = download_rx.try_recv() {
+            handle_download_notification(app, manager, notification);
         }
 
         // Draw
@@ -606,6 +674,7 @@ fn main_loop(
                     let action = handler::map_key_event(key, &app.settings.keybindings, app.screen);
                     handle_action(
                         app,
+                        manager,
                         action,
                         sidebar_state,
                         queue_state,
@@ -613,6 +682,7 @@ fn main_loop(
                         engine,
                         &mut ps,
                         preloader,
+                        &download_tx,
                         preload_target,
                     );
                 }
@@ -629,6 +699,7 @@ fn main_loop(
 
 fn handle_action(
     app: &mut App,
+    manager: &PlaylistManager,
     action: Action,
     sidebar_state: &mut PlaylistViewState,
     queue_state: &mut QueueViewState,
@@ -636,6 +707,7 @@ fn handle_action(
     engine: &mut AudioEngine,
     ps: &mut PlayState,
     preloader: &Option<Preloader>,
+    download_tx: &Sender<DownloadNotification>,
     preload_target: usize,
 ) {
     match action {
@@ -667,7 +739,7 @@ fn handle_action(
                 if should_execute_search(&app.search) {
                     execute_search(app, search_state);
                 } else {
-                    play_selected_search(app, search_state, sidebar_state, engine, ps);
+                    play_selected_search(app, manager, search_state, sidebar_state, engine, ps);
                 }
                 return;
             }
@@ -708,7 +780,7 @@ fn handle_action(
                             ps.next_linear_index = song_idx + 1 + PRELOAD_SIZE;
                         }
 
-                        play_song(app, engine, &song, ps);
+                        play_song(app, manager, engine, &song, ps);
                         preload_upcoming(preloader, &ps.upcoming, preload_target);
                     }
                 }
@@ -757,7 +829,7 @@ fn handle_action(
                         }
                         ps.next_linear_index = song_idx + 1 + PRELOAD_SIZE;
                     }
-                    play_song(app, engine, &song, ps);
+                    play_song(app, manager, engine, &song, ps);
                     preload_upcoming(preloader, &ps.upcoming, preload_target);
                 }
             }
@@ -766,7 +838,7 @@ fn handle_action(
             if app.repeat == app::RepeatMode::One {
                 // Repeat One: replay the same song
                 if let Some(song) = ps.current_song.clone() {
-                    play_song(app, engine, &song, ps);
+                    play_song(app, manager, engine, &song, ps);
                     sync_sidebar_selection(app, sidebar_state, &song);
                 }
             } else if let Some(next_song) = ps.upcoming.pop_front() {
@@ -776,7 +848,7 @@ fn handle_action(
                 }
                 // Refill one more song
                 refill_upcoming(app, ps, 1);
-                play_song(app, engine, &next_song, ps);
+                play_song(app, manager, engine, &next_song, ps);
                 sync_sidebar_selection(app, sidebar_state, &next_song);
                 preload_upcoming(preloader, &ps.upcoming, preload_target);
             }
@@ -791,7 +863,7 @@ fn handle_action(
                         ps.upcoming.pop_back();
                     }
                 }
-                play_song(app, engine, &prev_song, ps);
+                play_song(app, manager, engine, &prev_song, ps);
                 sync_sidebar_selection(app, sidebar_state, &prev_song);
                 preload_upcoming(preloader, &ps.upcoming, preload_target);
             }
@@ -873,12 +945,50 @@ fn handle_action(
         }
         Action::DownloadCurrentSong => {
             if let Some(current_song) = ps.current_song.clone() {
+                for playlist in app.cached_playlists.iter_mut() {
+                    for song in playlist.songs.iter_mut().filter(|s| s.video_id == current_song.video_id) {
+                        song.download_status = Some(playlist::models::DownloadStatus::Downloading);
+                    }
+                }
                 let download_dir = shellexpand::tilde("~/.termtube/downloads/current").to_string();
                 let download_path = PathBuf::from(&download_dir);
-                match download_song_to_dir(&current_song.url(), &download_path, None) {
-                    Ok(_) => {
-                        app.search.status =
-                            Some(format!("Started download: {}", current_song.title));
+                let video_id = current_song.video_id.clone();
+                match download_song_to_dir_async(&current_song.url(), &download_path, None) {
+                    Ok(handle) => {
+                        let tx = download_tx.clone();
+                        thread::spawn(move || {
+                            let result = handle.join_handle.join();
+                            match result {
+                                Ok(Ok(_output_pattern)) => {
+                                    if let Some(local_path) =
+                                        find_downloaded_file(&download_path, &video_id)
+                                    {
+                                        let _ = tx.send(DownloadNotification::Completed {
+                                            video_id,
+                                            local_path,
+                                        });
+                                    } else {
+                                        let _ = tx.send(DownloadNotification::Failed {
+                                            video_id,
+                                            error: "Download finished but file not found".to_string(),
+                                        });
+                                    }
+                                }
+                                Ok(Err(err)) => {
+                                    let _ = tx.send(DownloadNotification::Failed {
+                                        video_id,
+                                        error: err.to_string(),
+                                    });
+                                }
+                                Err(_) => {
+                                    let _ = tx.send(DownloadNotification::Failed {
+                                        video_id,
+                                        error: "Download thread panicked".to_string(),
+                                    });
+                                }
+                            }
+                        });
+                        app.search.status = Some(format!("Started download: {}", current_song.title));
                         app.search.error = None;
                     }
                     Err(e) => {
@@ -890,7 +1000,7 @@ fn handle_action(
             }
         }
         Action::DownloadCurrentPlaylist => {
-            let songs = app.current_playlist_songs();
+            let songs = app.current_playlist_songs().to_vec();
             if songs.is_empty() {
                 app.search.error = Some("No playlist selected or playlist is empty".to_string());
             } else {
@@ -906,10 +1016,61 @@ fn handle_action(
                         .to_string();
                 let download_path = PathBuf::from(&download_dir);
                 let urls: Vec<String> = songs.iter().map(|song| song.url()).collect();
-                match download_playlist_to_dir(&urls, &download_path, None) {
-                    Ok(_) => {
-                        app.search.status =
-                            Some(format!("Started playlist download: {}", download_dir));
+                for song in app
+                    .cached_playlists
+                    .get_mut(app.selected_playlist)
+                    .into_iter()
+                    .flat_map(|pl| pl.songs.iter_mut())
+                {
+                    song.download_status = Some(playlist::models::DownloadStatus::Downloading);
+                }
+                match download_playlist_to_dir_async(&urls, &download_path, None) {
+                    Ok(handles) => {
+                        let tx = download_tx.clone();
+                        for (song_id, handle) in songs
+                            .into_iter()
+                            .map(|song| song.video_id)
+                            .zip(handles.into_iter())
+                        {
+                            let tx = tx.clone();
+                            let download_path = download_path.clone();
+                            thread::spawn(move || {
+                                let result = handle.join_handle.join();
+                                match result {
+                                    Ok(Ok(_output_pattern)) => {
+                                        if let Some(local_path) =
+                                            find_downloaded_file(&download_path, &song_id)
+                                        {
+                                            let _ = tx.send(DownloadNotification::Completed {
+                                                video_id: song_id,
+                                                local_path,
+                                            });
+                                        } else {
+                                            let _ = tx.send(DownloadNotification::Failed {
+                                                video_id: song_id,
+                                                error: "Download finished but file not found".to_string(),
+                                            });
+                                        }
+                                    }
+                                    Ok(Err(err)) => {
+                                        let _ = tx.send(DownloadNotification::Failed {
+                                            video_id: song_id,
+                                            error: err.to_string(),
+                                        });
+                                    }
+                                    Err(_) => {
+                                        let _ = tx.send(DownloadNotification::Failed {
+                                            video_id: song_id,
+                                            error: "Download thread panicked".to_string(),
+                                        });
+                                    }
+                                }
+                            });
+                        }
+                        app.search.status = Some(format!(
+                            "Started playlist download: {}",
+                            download_dir
+                        ));
                         app.search.error = None;
                     }
                     Err(e) => {
@@ -1051,6 +1212,7 @@ fn selected_search_song(
 
 fn play_selected_search(
     app: &mut App,
+    manager: &PlaylistManager,
     search_state: &SearchViewState,
     sidebar_state: &mut PlaylistViewState,
     engine: &mut AudioEngine,
@@ -1066,7 +1228,7 @@ fn play_selected_search(
         ps.shuffle_pool.clear();
         ps.source_playlist = usize::MAX;
         ps.next_linear_index = 0;
-        play_song(app, engine, &song, ps);
+        play_song(app, manager, engine, &song, ps);
     }
 }
 
@@ -1121,6 +1283,20 @@ fn sync_sidebar_selection(
     let songs = app.current_playlist_songs();
     if let Some(idx) = songs.iter().position(|s| s.video_id == song.video_id) {
         sidebar_state.song_state.select(Some(idx));
+    }
+}
+
+fn clear_local_path_tag(app: &mut App, manager: &PlaylistManager, video_id: &str) {
+    for playlist in &mut app.cached_playlists {
+        let mut changed = false;
+        for song in playlist.songs.iter_mut().filter(|s| s.video_id == video_id) {
+            song.local_path = None;
+            song.download_status = None;
+            changed = true;
+        }
+        if changed {
+            let _ = manager.save_playlist(playlist);
+        }
     }
 }
 
@@ -1250,6 +1426,7 @@ fn refill_upcoming(app: &App, ps: &mut PlayState, count: usize) {
 /// Start playing a song via the audio engine.
 fn play_song(
     app: &mut App,
+    manager: &PlaylistManager,
     engine: &mut AudioEngine,
     song: &playlist::models::Song,
     ps: &mut PlayState,
@@ -1263,10 +1440,14 @@ fn play_song(
         None
     };
 
-    let url = song.url();
-    info!("Playing: {} ({})", song.title, url);
+    let source = app.effective_playback_source(song);
+    let play_target = match &source {
+        PlaybackSource::Local(path) => path.to_string_lossy().to_string(),
+        PlaybackSource::Remote(url) => url.clone(),
+    };
+    info!("Playing: {} ({})", song.title, play_target);
 
-    match engine.play_url(&url, cookies) {
+    match engine.play_url(&play_target, cookies) {
         Ok(()) => {
             app.is_playing = true;
             ps.current_song = Some(song.clone());
@@ -1278,6 +1459,25 @@ fn play_song(
         }
         Err(e) => {
             error!("Failed to play {}: {e}", song.title);
+            if matches!(source, PlaybackSource::Local(_)) {
+                clear_local_path_tag(app, manager, &song.video_id);
+                info!("Retrying remote playback for {} after local failure", song.title);
+                match engine.play_url(&song.url(), cookies) {
+                    Ok(()) => {
+                        app.is_playing = true;
+                        ps.current_song = Some(song.clone());
+                        ps.playback_start = None;
+                        ps.paused_duration = Duration::ZERO;
+                        ps.pause_instant = None;
+                        ps.error_message = None;
+                        ps.error_message_deadline = None;
+                        return;
+                    }
+                    Err(remote_err) => {
+                        error!("Failed to play remote {}: {remote_err}", song.title);
+                    }
+                }
+            }
             set_playback_error(app, ps, "Sorry, can't play this song :´-(".to_string());
         }
     }
@@ -1320,7 +1520,7 @@ fn draw_ui(
     playlist_names.push(format!("★ Favoritos ({fav_count})"));
 
     let songs = app.current_playlist_songs();
-    let song_titles: Vec<String> = songs.iter().map(|s| s.title.clone()).collect();
+    let song_titles: Vec<String> = songs.iter().map(|s| s.display_title()).collect();
     let song_video_ids: Vec<String> = songs.iter().map(|s| s.video_id.clone()).collect();
     let favorite_ids = app.favorites.all().clone();
     ui::playlist_view::render_sidebar(
@@ -1643,6 +1843,8 @@ mod tests {
             video_id: "vid1".to_string(),
             duration: Some(180),
             artist: "Artist".to_string(),
+            local_path: None,
+            download_status: None,
         };
 
         add_song_to_selected_playlist(&mut app, &song);
@@ -1677,6 +1879,8 @@ mod tests {
             video_id: "badid".to_string(),
             duration: Some(100),
             artist: "Artist".to_string(),
+            local_path: None,
+            download_status: None,
         });
         ps.playback_start = Some(Instant::now());
         ps.paused_duration = Duration::from_secs(10);
@@ -1706,6 +1910,8 @@ mod tests {
             video_id: "nextid".to_string(),
             duration: Some(120),
             artist: "Artist".to_string(),
+            local_path: None,
+            download_status: None,
         });
         ps.shuffle_pool.push_back(1);
         ps.history.push(playlist::models::Song {
@@ -1713,6 +1919,8 @@ mod tests {
             video_id: "previd".to_string(),
             duration: Some(100),
             artist: "Artist".to_string(),
+            local_path: None,
+            download_status: None,
         });
         ps.current_song = None;
         ps.source_playlist = 0;

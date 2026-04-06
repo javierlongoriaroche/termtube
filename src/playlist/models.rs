@@ -10,6 +10,15 @@ pub struct Song {
     /// Uploader / channel name.
     #[serde(default)]
     pub artist: String,
+    #[serde(default)]
+    pub local_path: Option<String>,
+    #[serde(skip, default)]
+    pub download_status: Option<DownloadStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadStatus {
+    Downloading,
 }
 
 impl Song {
@@ -25,6 +34,29 @@ impl Song {
                 format!("{m:02}:{s:02}")
             }
             None => "--:--".to_string(),
+        }
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.local_path.as_ref().map_or(false, |path| !path.is_empty())
+    }
+
+    pub fn display_title(&self) -> String {
+        let mut title = self.title.clone();
+        if self.download_status == Some(DownloadStatus::Downloading) {
+            title = format!("dwn>_ {title}");
+        }
+        if self.local_path.is_some() {
+            title = format!("{title} (local)");
+        }
+        title
+    }
+
+    pub fn validate_local_path(&mut self) {
+        if let Some(path) = &self.local_path {
+            if !std::path::Path::new(path).exists() {
+                self.local_path = None;
+            }
         }
     }
 }
@@ -76,6 +108,8 @@ mod tests {
             video_id: "dQw4w9WgXcQ".into(),
             duration: Some(212),
             artist: "Rick Astley".into(),
+            local_path: None,
+            download_status: None,
         };
         assert_eq!(song.url(), "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     }
@@ -87,6 +121,8 @@ mod tests {
             video_id: "x".into(),
             duration: Some(185),
             artist: String::new(),
+            local_path: None,
+            download_status: None,
         };
         assert_eq!(song.duration_display(), "03:05");
     }
@@ -98,6 +134,8 @@ mod tests {
             video_id: "x".into(),
             duration: None,
             artist: String::new(),
+            local_path: None,
+            download_status: None,
         };
         assert_eq!(song.duration_display(), "--:--");
     }
@@ -114,12 +152,16 @@ mod tests {
                         video_id: "1".into(),
                         duration: Some(60),
                         artist: String::new(),
+                        local_path: None,
+                        download_status: None,
                     },
                     Song {
                         title: "b".into(),
                         video_id: "2".into(),
                         duration: Some(120),
                         artist: String::new(),
+                        local_path: None,
+                        download_status: None,
                     },
                 ],
             },
@@ -142,6 +184,8 @@ mod tests {
             video_id: "abc123".into(),
             duration: Some(300),
             artist: "Artist".into(),
+            local_path: None,
+            download_status: None,
         };
         let json = serde_json::to_string(&song).unwrap();
         let deserialized: Song = serde_json::from_str(&json).unwrap();

@@ -16,12 +16,16 @@ fn test_search_cache_save_and_load() {
             video_id: "abc123".to_string(),
             duration: Some(123),
             artist: "Test Artist".to_string(),
+            local_path: None,
+            download_status: None,
         },
         Song {
             title: "Another Song".to_string(),
             video_id: "def456".to_string(),
             duration: None,
             artist: "".to_string(),
+            local_path: None,
+            download_status: None,
         },
     ];
     // Save to cache

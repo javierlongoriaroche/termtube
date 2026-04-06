@@ -57,7 +57,7 @@ pub fn render_controls(
         Span::styled(vol_bar, Style::default().fg(theme.primary)),
         Span::raw("  "),
         Span::styled(
-            "[q]uit  [?]help  [Tab]focus  [n]ext  [p]rev  [s]huffle  [r]epeat  [space]play/pause  [Shift+F]search  [Ctrl+D]download song  [Ctrl+Shift+D]download playlist",
+            "[q]uit  [?]help  [Tab]focus  [n]ext  [p]rev  [s]huffle  [r]epeat  [space]play/pause  [Shift+F]search  [Shift+D]download song  [Alt+Shift+D]download playlist",
             Style::default().fg(theme.fg_dim),
         ),
     ]);

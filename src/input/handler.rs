@@ -45,15 +45,13 @@ pub fn map_key_event(key: KeyEvent, keybindings: &KeybindingSettings, screen: Ap
     }
 
     // Global download shortcuts
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
-        let is_shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        match key.code {
-            KeyCode::Char('d') | KeyCode::Char('D') if is_shift => {
-                return Action::DownloadCurrentPlaylist
-            }
-            KeyCode::Char('d') => return Action::DownloadCurrentSong,
-            _ => {}
+    let is_shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    let is_alt = key.modifiers.contains(KeyModifiers::ALT);
+    if is_shift && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
+        if is_alt {
+            return Action::DownloadCurrentPlaylist;
         }
+        return Action::DownloadCurrentSong;
     }
 
     // Escape goes back or quits depending on screen
@@ -253,7 +251,7 @@ mod tests {
     #[test]
     fn test_download_current_song_mapping() {
         let kb = default_kb();
-        let key = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
+        let key = KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT);
         let action = map_key_event(key, &kb, AppScreen::Main);
         assert_eq!(action, Action::DownloadCurrentSong);
     }
@@ -263,7 +261,7 @@ mod tests {
         let kb = default_kb();
         let key = KeyEvent::new(
             KeyCode::Char('D'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
         );
         let action = map_key_event(key, &kb, AppScreen::Main);
         assert_eq!(action, Action::DownloadCurrentPlaylist);

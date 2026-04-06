@@ -118,6 +118,11 @@ pub enum DownloadError {
     YtdlpSpawn(std::io::Error),
 }
 
+pub struct DownloadHandle {
+    pub output_pattern: PathBuf,
+    pub join_handle: thread::JoinHandle<Result<PathBuf, DownloadError>>,
+}
+
 /// Download a single song URL to the target directory in a background process.
 pub fn download_song_to_dir(
     url: &str,
@@ -144,6 +149,66 @@ pub fn download_song_to_dir(
 
     let _child = cmd.spawn().map_err(DownloadError::YtdlpSpawn)?;
     Ok(output_pattern)
+}
+
+pub fn download_song_to_dir_async(
+    url: &str,
+    target_dir: &Path,
+    cookies: Option<&Path>,
+) -> Result<DownloadHandle, DownloadError> {
+    fs::create_dir_all(target_dir)?;
+    let output_pattern = target_dir.join("%(title)s-%(id)s.%(ext)s");
+    let output_pattern_thread = output_pattern.clone();
+    let url = url.to_string();
+    let cookies = cookies.map(|p| p.to_path_buf());
+
+    let join_handle = thread::spawn(move || {
+        let mut cmd = Command::new("yt-dlp");
+        cmd.arg("--no-warnings")
+            .arg("--quiet")
+            .arg("-f")
+            .arg("bestaudio")
+            .arg("-o")
+            .arg(&output_pattern_thread)
+            .arg(&url)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        if let Some(cookies) = cookies {
+            cmd.arg("--cookies").arg(cookies);
+        }
+
+        let status = cmd.spawn().map_err(DownloadError::YtdlpSpawn)?.wait();
+        match status {
+            Ok(status) if status.success() => Ok(output_pattern_thread.clone()),
+            Ok(status) => Err(DownloadError::YtdlpSpawn(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("yt-dlp exited with status {status}"),
+            ))),
+            Err(err) => Err(DownloadError::YtdlpSpawn(err)),
+        }
+    });
+
+    Ok(DownloadHandle {
+        output_pattern,
+        join_handle,
+    })
+}
+
+pub fn download_playlist_to_dir_async(
+    urls: &[String],
+    target_dir: &Path,
+    cookies: Option<&Path>,
+) -> Result<Vec<DownloadHandle>, DownloadError> {
+    fs::create_dir_all(target_dir)?;
+    let mut handles = Vec::with_capacity(urls.len());
+
+    for url in urls {
+        let handle = download_song_to_dir_async(url, target_dir, cookies)?;
+        handles.push(handle);
+    }
+
+    Ok(handles)
 }
 
 /// Download multiple song URLs to the target directory in background processes.

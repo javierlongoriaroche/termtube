@@ -29,6 +29,22 @@ impl PlaylistManager {
         }
     }
 
+    fn validate_playlist_local_paths(&self, playlist: &mut Playlist) -> Result<bool, ManagerError> {
+        let mut changed = false;
+        for song in &mut playlist.songs {
+            if let Some(path) = &song.local_path {
+                if !std::path::Path::new(path).exists() {
+                    song.local_path = None;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.save_playlist(playlist)?;
+        }
+        Ok(changed)
+    }
+
     /// Directory where individual playlist JSON files are stored.
     fn playlists_dir(&self) -> PathBuf {
         self.base_dir.join("playlists")
@@ -55,7 +71,8 @@ impl PlaylistManager {
             return Ok(None);
         }
         let content = fs::read_to_string(&path)?;
-        let playlist: Playlist = serde_json::from_str(&content)?;
+        let mut playlist: Playlist = serde_json::from_str(&content)?;
+        let _ = self.validate_playlist_local_paths(&mut playlist)?;
         Ok(Some(playlist))
     }
 
@@ -162,7 +179,10 @@ impl PlaylistManager {
     ) -> Result<Vec<Playlist>, ManagerError> {
         self.ensure_dirs()?;
 
-        let cached = self.load_all_cached(entries);
+        let mut cached = self.load_all_cached(entries);
+        for playlist in &mut cached {
+            let _ = self.validate_playlist_local_paths(playlist);
+        }
         if cached.len() == entries.len() {
             return Ok(cached);
         }
@@ -172,10 +192,16 @@ impl PlaylistManager {
 
     /// Load all playlists from cache (no network). Returns whatever is cached.
     pub fn load_all_cached(&self, entries: &[PlaylistEntry]) -> Vec<Playlist> {
-        entries
+        let mut playlists: Vec<Playlist> = entries
             .iter()
             .filter_map(|e| self.load_cached(&e.name).ok().flatten())
-            .collect()
+            .collect();
+
+        for playlist in &mut playlists {
+            let _ = self.validate_playlist_local_paths(playlist);
+        }
+
+        playlists
     }
 }
 
@@ -202,6 +228,8 @@ mod tests {
                     video_id: format!("{name}_{i}"),
                     duration: Some(180 + i as u64),
                     artist: "Test".to_string(),
+                    local_path: None,
+                    download_status: None,
                 })
                 .collect(),
         }
