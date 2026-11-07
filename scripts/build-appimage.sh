@@ -25,7 +25,9 @@ if [[ -z "${TERMTUBE_BIN:-}" ]]; then
 fi
 
 rm -rf "$WORK" "$OUTPUT"
-mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$DIST"
+APP_ID="io.github.javierlongoriaroche.termtube"
+VERSION="$(grep -m1 '^version' "$ROOT/Cargo.toml" | cut -d'"' -f2)"
+mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/usr/share/metainfo" "$DIST"
 
 install -m 755 "$TERMTUBE_BIN" "$APPDIR/usr/bin/termtube"
 install -m 755 "$(command -v mpv)" "$APPDIR/usr/bin/mpv"
@@ -48,7 +50,7 @@ exec "$HERE/usr/bin/termtube" "$@"
 EOF
 chmod 755 "$APPDIR/AppRun"
 
-cat > "$APPDIR/usr/share/applications/termtube.desktop" <<'EOF'
+cat > "$APPDIR/usr/share/applications/$APP_ID.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=TermTube
@@ -59,6 +61,35 @@ Terminal=true
 Categories=Audio;AudioVideo;Player;
 EOF
 cp "$ROOT/logo.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/termtube.png"
+
+# AppStream metadata, read by software centers and AppImageHub.
+cat > "$APPDIR/usr/share/metainfo/$APP_ID.appdata.xml" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="console-application">
+  <id>$APP_ID</id>
+  <name>TermTube</name>
+  <summary>Lightweight YouTube Music client for the terminal</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.javierlongoriaroche"><name>javierlongoriaroche</name></developer>
+  <description>
+    <p>TermTube plays YouTube Music from the terminal using about 50 MB of RAM: Home feed,
+    search, your library and liked songs, radio, likes and lyrics, with audio played by mpv.</p>
+  </description>
+  <launchable type="desktop-id">$APP_ID.desktop</launchable>
+  <url type="homepage">https://javierlongoriaroche.github.io/termtube/</url>
+  <url type="bugtracker">https://github.com/javierlongoriaroche/termtube/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://javierlongoriaroche.github.io/termtube/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  <provides><binary>termtube</binary></provides>
+  <categories><category>Audio</category><category>Player</category></categories>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="$VERSION"/></releases>
+</component>
+EOF
 
 echo "Downloading linuxdeploy…"
 LINUXDEPLOY="$WORK/linuxdeploy-$ARCH.AppImage"
@@ -72,7 +103,7 @@ echo "Packaging AppImage…"
         --appdir "$APPDIR" \
         --executable "$APPDIR/usr/bin/termtube" \
         --executable "$APPDIR/usr/bin/mpv" \
-        --desktop-file "$APPDIR/usr/share/applications/termtube.desktop" \
+        --desktop-file "$APPDIR/usr/share/applications/$APP_ID.desktop" \
         --output appimage
 )
 

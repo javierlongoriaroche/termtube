@@ -1,0 +1,38 @@
+# Maintainer: javierlongoriaroche <https://github.com/javierlongoriaroche>
+pkgname=termtube
+pkgver=0.2.2
+pkgrel=1
+pkgdesc="Lightweight YouTube Music client for the terminal"
+arch=('x86_64' 'aarch64')
+url="https://javierlongoriaroche.github.io/termtube/"
+license=('MIT')
+depends=('mpv' 'yt-dlp' 'deno' 'gcc-libs' 'glibc')
+makedepends=('cargo')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/javierlongoriaroche/termtube/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 target/release/termtube "$pkgdir/usr/bin/termtube"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

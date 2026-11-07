@@ -1,8 +1,15 @@
 [package]
 name = "termtube"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
-description = "A terminal YouTube Music client: InnerTube for data, mpv for audio"
+description = "Lightweight YouTube Music client for the terminal: home, search, library, radio, likes and lyrics in ~50 MB of RAM"
+license = "MIT"
+repository = "https://github.com/javierlongoriaroche/termtube"
+homepage = "https://javierlongoriaroche.github.io/termtube/"
+readme = "README.md"
+keywords = ["youtube-music", "music-player", "tui", "terminal", "mpv"]
+categories = ["multimedia::audio", "command-line-utilities"]
+include = ["/src", "/config/default.toml", "/README.md", "/LICENSE", "/Cargo.toml", "/Cargo.lock"]
 
 [dependencies]
 ratatui = "0.29"

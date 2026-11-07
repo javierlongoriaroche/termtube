@@ -2,7 +2,7 @@
 
 **A fast, low-memory YouTube Music player for Linux and macOS.** Browse your Home feed, search songs, albums and artists, play your playlists and *Liked music*, keep the music going with radio, like songs and read lyrics — all from the terminal, using **~50 MB of RAM** instead of the ~500 MB of the YouTube Music desktop app or a browser tab.
 
-![TermTube demo: searching, playing, lyrics, queue and an album page](docs/demo.gif)
+![TermTube demo: searching, playing, lyrics, queue and an album page](https://raw.githubusercontent.com/javierlongoriaroche/termtube/master/docs/demo.gif)
 
 **[⬇ Download](https://github.com/javierlongoriaroche/termtube/releases/latest)** · Linux AppImage (x86_64 / ARM64, no install needed) · macOS (Apple Silicon & Intel)
 
@@ -51,10 +51,12 @@ Download the latest [release](https://github.com/javierlongoriaroche/termtube/re
 - **Linux**: `termtube-x86_64.AppImage` or `termtube-aarch64.AppImage` — self-contained (mpv, yt-dlp and deno included). `chmod +x` and run.
 - **macOS**: `termtube-macos-universal.dmg` (Apple Silicon and Intel) — needs `brew install mpv yt-dlp`.
 
-Or build from source:
+Or with a package manager:
 
 ```bash
-cargo install --path .
+brew install javierlongoriaroche/tap/termtube   # macOS / Linux (Homebrew), installs mpv and yt-dlp too
+yay -S termtube                                 # Arch Linux (AUR)
+cargo install termtube                          # any platform with Rust; needs mpv and yt-dlp
 ```
 
 ## Log in
@@ -108,7 +110,7 @@ termtube
 
 ## Releasing
 
-Pushing a tag like `v0.2.0` runs `.github/workflows/release.yml`, which tests the code, builds both AppImages (`scripts/build-appimage.sh` on native x86_64 and ARM64 runners) and the universal macOS `.dmg` (`scripts/build-macos-app.sh`), and publishes them in a GitHub release. Pull requests run the same builds without publishing.
+Pushing a tag like `v0.2.0` runs `.github/workflows/release.yml`, which tests the code, builds both AppImages (`scripts/build-appimage.sh` on native x86_64 and ARM64 runners) and the universal macOS `.dmg` (`scripts/build-macos-app.sh`), and publishes them in a GitHub release. Pull requests run the same builds without publishing. Afterwards, `scripts/update-packages.sh <version>` updates the Homebrew formula and the AUR package in `pkg/` (see [`pkg/README.md`](pkg/README.md)).
 
 ## Development
 
