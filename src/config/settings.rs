@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -10,108 +10,87 @@ pub enum SettingsError {
     Io(#[from] std::io::Error),
     #[error("failed to parse config file: {0}")]
     Parse(#[from] toml::de::Error),
+    #[error("failed to serialize config: {0}")]
+    Serialize(#[from] toml::ser::Error),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// User configuration loaded from `~/.config/termtube/config.toml`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     #[serde(default)]
     pub general: GeneralSettings,
     #[serde(default)]
-    pub paths: PathSettings,
+    pub account: AccountSettings,
+    #[serde(default)]
+    pub mpv: MpvSettings,
     #[serde(default)]
     pub theme: ThemeSettings,
     #[serde(default)]
-    pub keybindings: KeybindingSettings,
-    #[serde(default)]
-    pub visualizer: VisualizerSettings,
+    pub meter: MeterSettings,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GeneralSettings {
-    #[serde(default = "default_cache_dir")]
-    pub cache_dir: String,
-    #[serde(default = "default_log_file")]
-    pub log_file: String,
-    #[serde(default = "default_preload_count")]
-    pub preload_count: u8,
+    /// Directory for cookies, logs and caches.
+    #[serde(default = "default_data_dir")]
+    pub data_dir: String,
+    /// Initial volume (0-100).
+    #[serde(default = "default_volume")]
+    pub volume: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PathSettings {
-    #[serde(default = "default_cookies_path")]
-    pub cookies: String,
-    #[serde(default = "default_playlists_path")]
-    pub playlists: String,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AccountSettings {
+    /// Browser used by `termtube login` to read cookies (as understood by yt-dlp).
+    #[serde(default = "default_browser")]
+    pub browser: String,
+    /// Index of the Google account inside the browser session (`X-Goog-AuthUser`).
+    #[serde(default)]
+    pub authuser: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MpvSettings {
+    #[serde(default = "default_mpv_path")]
+    pub path: String,
+    #[serde(default = "default_ytdlp_path")]
+    pub ytdlp_path: String,
+    /// Extra arguments appended to the mpv command line.
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ThemeSettings {
-    #[serde(default = "default_theme_name")]
-    pub name: String,
     #[serde(default = "default_primary_color")]
     pub primary: String,
     #[serde(default = "default_secondary_color")]
     pub secondary: String,
-    #[serde(default = "default_visualizer_colors")]
-    pub visualizer_colors: Vec<String>,
+    #[serde(default = "default_meter_colors")]
+    pub meter_colors: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeybindingSettings {
-    #[serde(default = "default_play_pause")]
-    pub play_pause: String,
-    #[serde(default = "default_next")]
-    pub next: String,
-    #[serde(default = "default_previous")]
-    pub previous: String,
-    #[serde(default = "default_volume_up")]
-    pub volume_up: String,
-    #[serde(default = "default_volume_down")]
-    pub volume_down: String,
-    #[serde(default = "default_shuffle")]
-    pub shuffle: String,
-    #[serde(default = "default_repeat")]
-    pub repeat: String,
-    #[serde(default = "default_favorite")]
-    pub favorite: String,
-    #[serde(default = "default_quit")]
-    pub quit: String,
-    #[serde(default = "default_search")]
-    pub search: String,
-    #[serde(default = "default_search_alt")]
-    pub search_alt: String,
-    #[serde(default = "default_queue")]
-    pub queue: String,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MeterSettings {
+    /// Show the stereo level meter in the player bar.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VisualizerSettings {
-    #[serde(default = "default_bars")]
-    pub bars: u16,
-    #[serde(default = "default_fps")]
-    pub fps: u16,
-    #[serde(default = "default_decay")]
-    pub decay: f64,
+fn default_data_dir() -> String {
+    "~/.termtube".to_string()
 }
-
-// Default value functions
-fn default_cache_dir() -> String {
-    "~/.termtube/cache".to_string()
+fn default_volume() -> u8 {
+    70
 }
-fn default_log_file() -> String {
-    "~/.termtube/termtube.log".to_string()
+fn default_browser() -> String {
+    "brave".to_string()
 }
-fn default_preload_count() -> u8 {
-    5
+fn default_mpv_path() -> String {
+    "mpv".to_string()
 }
-fn default_cookies_path() -> String {
-    "~/.termtube/cookies.txt".to_string()
-}
-fn default_playlists_path() -> String {
-    "~/.termtube/playlist.txt".to_string()
-}
-fn default_theme_name() -> String {
-    "default".to_string()
+fn default_ytdlp_path() -> String {
+    "yt-dlp".to_string()
 }
 fn default_primary_color() -> String {
     "#61afef".to_string()
@@ -119,151 +98,106 @@ fn default_primary_color() -> String {
 fn default_secondary_color() -> String {
     "#c678dd".to_string()
 }
-fn default_visualizer_colors() -> Vec<String> {
-    vec![
-        "#98c379".to_string(),
-        "#e5c07b".to_string(),
-        "#e06c75".to_string(),
-    ]
+fn default_meter_colors() -> Vec<String> {
+    vec!["#98c379".into(), "#e5c07b".into(), "#e06c75".into()]
 }
-fn default_play_pause() -> String {
-    "space".to_string()
-}
-fn default_next() -> String {
-    "n".to_string()
-}
-fn default_previous() -> String {
-    "p".to_string()
-}
-fn default_volume_up() -> String {
-    "+".to_string()
-}
-fn default_volume_down() -> String {
-    "-".to_string()
-}
-fn default_shuffle() -> String {
-    "s".to_string()
-}
-fn default_repeat() -> String {
-    "r".to_string()
-}
-fn default_favorite() -> String {
-    "f".to_string()
-}
-fn default_quit() -> String {
-    "q".to_string()
-}
-fn default_search() -> String {
-    "/".to_string()
-}
-fn default_search_alt() -> String {
-    "F".to_string()
-}
-fn default_queue() -> String {
-    "Q".to_string()
-}
-fn default_bars() -> u16 {
-    24
-}
-fn default_fps() -> u16 {
-    30
-}
-fn default_decay() -> f64 {
-    0.85
+fn default_true() -> bool {
+    true
 }
 
-// Trait impls for Default
 impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
-            cache_dir: default_cache_dir(),
-            log_file: default_log_file(),
-            preload_count: default_preload_count(),
+            data_dir: default_data_dir(),
+            volume: default_volume(),
         }
     }
 }
-
-impl Default for PathSettings {
+impl Default for AccountSettings {
     fn default() -> Self {
         Self {
-            cookies: default_cookies_path(),
-            playlists: default_playlists_path(),
+            browser: default_browser(),
+            authuser: 0,
         }
     }
 }
-
+impl Default for MpvSettings {
+    fn default() -> Self {
+        Self {
+            path: default_mpv_path(),
+            ytdlp_path: default_ytdlp_path(),
+            extra_args: vec![],
+        }
+    }
+}
 impl Default for ThemeSettings {
     fn default() -> Self {
         Self {
-            name: default_theme_name(),
             primary: default_primary_color(),
             secondary: default_secondary_color(),
-            visualizer_colors: default_visualizer_colors(),
+            meter_colors: default_meter_colors(),
         }
     }
 }
-
-impl Default for KeybindingSettings {
+impl Default for MeterSettings {
     fn default() -> Self {
-        Self {
-            play_pause: default_play_pause(),
-            next: default_next(),
-            previous: default_previous(),
-            volume_up: default_volume_up(),
-            volume_down: default_volume_down(),
-            shuffle: default_shuffle(),
-            repeat: default_repeat(),
-            favorite: default_favorite(),
-            quit: default_quit(),
-            search: default_search(),
-            search_alt: default_search_alt(),
-            queue: default_queue(),
-        }
-    }
-}
-
-impl Default for VisualizerSettings {
-    fn default() -> Self {
-        Self {
-            bars: default_bars(),
-            fps: default_fps(),
-            decay: default_decay(),
-        }
-    }
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            general: GeneralSettings::default(),
-            paths: PathSettings::default(),
-            theme: ThemeSettings::default(),
-            keybindings: KeybindingSettings::default(),
-            visualizer: VisualizerSettings::default(),
-        }
+        Self { enabled: true }
     }
 }
 
 impl Settings {
-    /// Load settings from a TOML file. Missing fields use defaults.
-    pub fn load(path: &Path) -> Result<Self, SettingsError> {
-        let content = fs::read_to_string(path)?;
-        Self::from_str(&content)
+    /// Parses settings from TOML text; missing sections fall back to defaults.
+    pub fn from_toml(content: &str) -> Result<Self, SettingsError> {
+        Ok(toml::from_str(content)?)
     }
 
-    /// Parse settings from a TOML string. Missing fields use defaults.
-    pub fn from_str(content: &str) -> Result<Self, SettingsError> {
-        let settings: Settings = toml::from_str(content)?;
-        Ok(settings)
+    /// Loads settings from `path`, or returns defaults when the file does not exist.
+    pub fn load_or_default(path: &Path) -> Result<Self, SettingsError> {
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        Self::from_toml(&fs::read_to_string(path)?)
     }
 
-    /// Expand shell paths like ~ to absolute paths.
-    pub fn resolve_paths(&mut self) {
-        self.general.cache_dir = shellexpand::tilde(&self.general.cache_dir).to_string();
-        self.general.log_file = shellexpand::tilde(&self.general.log_file).to_string();
-        self.paths.cookies = shellexpand::tilde(&self.paths.cookies).to_string();
-        self.paths.playlists = shellexpand::tilde(&self.paths.playlists).to_string();
+    /// Writes settings to `path`, creating parent directories as needed.
+    pub fn save(&self, path: &Path) -> Result<(), SettingsError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, toml::to_string_pretty(self)?)?;
+        Ok(())
     }
+
+    /// Data directory with `~` expanded.
+    pub fn data_dir(&self) -> PathBuf {
+        expand(&self.general.data_dir)
+    }
+
+    pub fn cookies_path(&self) -> PathBuf {
+        self.data_dir().join("cookies.txt")
+    }
+
+    pub fn log_path(&self) -> PathBuf {
+        self.data_dir().join("termtube.log")
+    }
+}
+
+/// Default location of the config file.
+pub fn default_config_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
+        .join("termtube")
+        .join("config.toml")
+}
+
+/// Expands `~` and environment variables in a path.
+pub fn expand(path: &str) -> PathBuf {
+    PathBuf::from(
+        shellexpand::full(path)
+            .map(|p| p.into_owned())
+            .unwrap_or_else(|_| path.to_string()),
+    )
 }
 
 #[cfg(test)]
@@ -271,97 +205,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_settings() {
-        let settings = Settings::default();
-        assert_eq!(settings.general.preload_count, 5);
-        assert_eq!(settings.visualizer.bars, 24);
-        assert_eq!(settings.keybindings.quit, "q");
-        assert_eq!(settings.keybindings.search_alt, "F");
-        assert_eq!(settings.theme.visualizer_colors.len(), 3);
+    fn test_empty_toml_uses_defaults() {
+        let s = Settings::from_toml("").unwrap();
+        assert_eq!(s, Settings::default());
+        assert_eq!(s.account.browser, "brave");
+        assert!(s.meter.enabled);
     }
 
     #[test]
-    fn test_parse_full_config() {
-        let toml = r##"
-[general]
-cache_dir = "~/.termtube/cache"
-log_file = "~/.termtube/termtube.log"
-preload_count = 2
-
-[paths]
-cookies = "./cookies.txt"
-playlists = "./playlist.txt"
-
-[theme]
-name = "default"
-primary = "#61afef"
-secondary = "#c678dd"
-visualizer_colors = ["#98c379", "#e5c07b", "#e06c75"]
-
-[keybindings]
-play_pause = "space"
-next = "n"
-previous = "p"
-volume_up = "+"
-volume_down = "-"
-shuffle = "s"
-repeat = "r"
-favorite = "f"
-quit = "q"
-search = "/"
-        search_alt = "F"
-bars = 24
-fps = 30
-decay = 0.85
-"##;
-        let settings = Settings::from_str(toml).unwrap();
-        assert_eq!(settings.general.preload_count, 2);
-        assert_eq!(settings.visualizer.fps, 30);
-        assert_eq!(settings.theme.primary, "#61afef");
+    fn test_partial_toml_overrides_only_given_fields() {
+        let s = Settings::from_toml("[account]\nauthuser = 1\n[meter]\nenabled = false\n").unwrap();
+        assert_eq!(s.account.authuser, 1);
+        assert_eq!(s.account.browser, "brave");
+        assert!(!s.meter.enabled);
+        assert_eq!(s.general.volume, 70);
     }
 
     #[test]
-    fn test_parse_partial_config() {
-        let toml = r#"
-[general]
-preload_count = 3
-
-[visualizer]
-bars = 32
-"#;
-        let settings = Settings::from_str(toml).unwrap();
-        assert_eq!(settings.general.preload_count, 3);
-        assert_eq!(settings.visualizer.bars, 32);
-        // Defaults for missing fields
-        assert_eq!(settings.keybindings.quit, "q");
-        assert_eq!(settings.theme.name, "default");
+    fn test_save_and_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("config.toml");
+        let mut s = Settings::default();
+        s.account.authuser = 2;
+        s.save(&path).unwrap();
+        assert_eq!(Settings::load_or_default(&path).unwrap(), s);
     }
 
     #[test]
-    fn test_parse_empty_config() {
-        let settings = Settings::from_str("").unwrap();
-        assert_eq!(settings.general.preload_count, 5);
-        assert_eq!(settings.visualizer.bars, 24);
-        assert_eq!(settings.keybindings.search_alt, "F");
+    fn test_missing_file_returns_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Settings::load_or_default(&dir.path().join("none.toml")).unwrap();
+        assert_eq!(s, Settings::default());
     }
 
     #[test]
-    fn test_default_search_alt() {
-        let settings = Settings::default();
-        assert_eq!(settings.keybindings.search_alt, "F");
-    }
-
-    #[test]
-    fn test_resolve_tilde_paths() {
-        let mut settings = Settings::default();
-        settings.resolve_paths();
-        assert!(!settings.general.cache_dir.contains('~'));
-        assert!(settings.general.cache_dir.starts_with('/'));
-    }
-
-    #[test]
-    fn test_invalid_toml() {
-        let result = Settings::from_str("this is not valid [toml");
-        assert!(result.is_err());
+    fn test_paths_are_inside_data_dir() {
+        let mut s = Settings::default();
+        s.general.data_dir = "/tmp/tt".into();
+        assert_eq!(s.cookies_path(), PathBuf::from("/tmp/tt/cookies.txt"));
+        assert_eq!(s.log_path(), PathBuf::from("/tmp/tt/termtube.log"));
     }
 }
