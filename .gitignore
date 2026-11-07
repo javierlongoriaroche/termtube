@@ -6,3 +6,4 @@ playlist.txt
 *.AppImage
 *.deb
 packaging
+/dist
