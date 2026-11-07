@@ -13,6 +13,6 @@ pkgbase = termtube
 	depends = gcc-libs
 	depends = glibc
 	source = termtube-0.2.2.tar.gz::https://github.com/javierlongoriaroche/termtube/archive/refs/tags/v0.2.2.tar.gz
-	sha256sums = 0000000000000000000000000000000000000000000000000000000000000000
+	sha256sums = 8b2df2f77a670eae993a031a91eec03c46ec8b541fea7112a983262bcda4b829
 
 pkgname = termtube
