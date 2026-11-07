@@ -40,14 +40,19 @@ cargo install --path .
 
 ## Log in
 
-Sign in to https://music.youtube.com in your browser first, then:
+Just run `termtube`: if there is no session (or it expired) it signs you in first.
+
+It looks for a signed-in YouTube Music session in every installed browser — Firefox, Chrome, Chromium, Brave, Edge, Vivaldi, Opera (including snap and flatpak installs) and Safari on macOS. If none is signed in, it **opens https://music.youtube.com** in your default browser and waits until you sign in there.
 
 ```bash
-termtube login                    # reads cookies from Brave by default
-termtube login --browser chrome   # or firefox, safari, edge, ...
+termtube login                          # same flow, on demand (e.g. to switch account)
+termtube login --browser firefox        # only read one browser
+termtube login --browser "chromium:/path/to/profile"
+termtube login --cookies-file cookies.txt   # import a cookies.txt exported with a browser extension
+termtube login --account 1              # pick the Google account when several are signed in
 ```
 
-Only `youtube.com` cookies are kept, in `~/.termtube/cookies.txt` (mode 600). If several Google accounts are signed in, you'll be asked which one to use (or pass `--account N`). Run it again whenever the session expires.
+Only `youtube.com` cookies are kept, in `~/.termtube/cookies.txt` (mode 600). Tip: if you signed in but it is not detected, close the browser so it writes its cookies to disk.
 
 ## Usage
 
