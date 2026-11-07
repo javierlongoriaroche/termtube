@@ -9,7 +9,7 @@ license=('MIT')
 depends=('mpv' 'yt-dlp' 'deno' 'gcc-libs' 'glibc')
 makedepends=('cargo')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/javierlongoriaroche/termtube/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+sha256sums=('8b2df2f77a670eae993a031a91eec03c46ec8b541fea7112a983262bcda4b829')
 
 prepare() {
   cd "$pkgname-$pkgver"
