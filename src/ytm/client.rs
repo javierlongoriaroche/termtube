@@ -476,17 +476,6 @@ mod live {
 
     #[tokio::test]
     #[ignore = "hits the real YouTube Music API"]
-    async fn live_dump_liked_json() {
-        let ytm = client().await;
-        let query = GetPlaylistTracksQuery::new(PlaylistID::from_raw(playlist_browse_id("LM")));
-        let json = ytm.inner.json_query(query).await.unwrap().into_inner();
-        let out = std::env::temp_dir().join("termtube-lm.json");
-        std::fs::write(&out, serde_json::to_string_pretty(&json).unwrap()).unwrap();
-        println!("dumped {}", out.display());
-    }
-
-    #[tokio::test]
-    #[ignore = "hits the real YouTube Music API"]
     async fn live_library_playlists_load() {
         let ytm = client().await;
         let entries = ytm.library_playlists().await.unwrap();
