@@ -1,22 +1,41 @@
-# TermTube 🎵
+# TermTube — lightweight YouTube Music client for the terminal
 
-YouTube Music in your terminal. Browse your Home feed, search, open albums, artists and your playlists, play with radio "up next", like songs and read lyrics — using ~50 MB of RAM instead of a full browser.
+**A fast, low-memory YouTube Music player for Linux and macOS.** Browse your Home feed, search songs, albums and artists, play your playlists and *Liked music*, keep the music going with radio, like songs and read lyrics — all from the terminal, using **~50 MB of RAM** instead of the ~500 MB of the YouTube Music desktop app or a browser tab.
 
-- **Data**: YouTube Music's internal API (InnerTube) through [`ytmapi-rs`](https://docs.rs/ytmapi-rs), authenticated with your browser session.
-- **Audio**: [mpv](https://mpv.io) controlled over JSON IPC (seeking, gapless, media keys, macOS Now Playing).
-- **Streams**: [yt-dlp](https://github.com/yt-dlp/yt-dlp) resolves the next song in the background so it starts instantly.
+![TermTube demo: searching, playing, lyrics, queue and an album page](docs/demo.gif)
+
+**[⬇ Download](https://github.com/javierlongoriaroche/termtube/releases/latest)** · Linux AppImage (x86_64 / ARM64, no install needed) · macOS (Apple Silicon & Intel)
+
+## Why TermTube?
+
+| | YouTube Music desktop / browser | TermTube |
+|---|---|---|
+| RAM while playing | 460–600 MB | **~50 MB** |
+| CPU while playing | ~3–4 % | ~5 % (mostly audio decoding) |
+| Your library, likes and recommendations | ✓ | ✓ (same account) |
+| Works over SSH / in a tmux pane | ✗ | ✓ |
+| Keyboard-only | ✗ | ✓ |
+
+Ideal for machines with 8 GB of RAM or less, developers who live in the terminal, and anyone looking for a **YouTube Music lite** experience.
 
 ## Features
 
 - Home feed (Quick picks, mixes, listen again…) with pagination
 - Search by songs, albums, artists or playlists
-- Library: your playlists and *Liked music*
+- Library: your playlists and *Liked music*, with a ♥ on liked songs everywhere
 - Album, playlist and artist pages
 - Radio: playing a single song keeps the queue going with similar music
 - Queue panel: reorder, remove, play next, shuffle, repeat
 - Like/unlike synced with your account (`f`), plays recorded in your history
 - Lyrics panel (`l`)
 - Stereo level meter in the player bar (toggle with `v` or in the config)
+- Guided sign-in: finds your session in any installed browser or opens music.youtube.com for you
+
+## How it works
+
+- **Data**: YouTube Music's internal API (InnerTube) through [`ytmapi-rs`](https://docs.rs/ytmapi-rs), authenticated with your browser session.
+- **Audio**: [mpv](https://mpv.io) controlled over JSON IPC (seeking, gapless, media keys, macOS Now Playing).
+- **Streams**: [yt-dlp](https://github.com/yt-dlp/yt-dlp) resolves the next song in the background so it starts instantly.
 
 ## Requirements
 
@@ -121,3 +140,7 @@ src/
 ## License
 
 MIT
+
+---
+
+TermTube is an independent open-source project. It is not affiliated with, endorsed or sponsored by Google or YouTube. "YouTube" and "YouTube Music" are trademarks of Google LLC, used here only to describe compatibility.

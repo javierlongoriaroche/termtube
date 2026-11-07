@@ -152,9 +152,7 @@ pub fn track_line<'a>(
         meta = format!("{meta} · {album}");
     }
     let duration = t.duration.map(format_duration).unwrap_or_default();
-    let used = 3 + t.title.chars().count() + 3 + duration.len();
-    let meta = truncate(&meta, width.saturating_sub(used));
-    let pad = width.saturating_sub(used + meta.chars().count());
+    let (title, meta, pad) = fit_row(&t.title, &meta, &duration, width.saturating_sub(3));
     let title_style = if is_playing {
         Style::new().fg(theme.primary).bold()
     } else {
@@ -163,12 +161,34 @@ pub fn track_line<'a>(
     Line::from(vec![
         Span::from(icon).fg(theme.primary),
         Span::from(heart).fg(theme.liked),
-        Span::styled(t.title.clone(), title_style),
-        Span::from("   "),
+        Span::styled(title, title_style),
         Span::from(meta).fg(theme.fg_dim),
         Span::from(" ".repeat(pad)),
         Span::from(duration).fg(theme.fg_dim),
     ])
+}
+
+/// Fits title, metadata and a right-aligned duration into `width` columns.
+/// The title has priority, metadata is shown only if part of it fits, and the
+/// duration always keeps one space before it.
+/// @returns (title, metadata with leading separator, padding before the duration).
+fn fit_row(title: &str, meta: &str, duration: &str, width: usize) -> (String, String, usize) {
+    const SEP: &str = "   ";
+    const MIN_META: usize = 6;
+    let reserved = if duration.is_empty() {
+        0
+    } else {
+        duration.chars().count() + 1
+    };
+    let title = truncate(title, width.saturating_sub(reserved));
+    let rest = width.saturating_sub(reserved + title.chars().count());
+    let meta = if !meta.is_empty() && rest >= SEP.len() + MIN_META {
+        format!("{SEP}{}", truncate(meta, rest - SEP.len()))
+    } else {
+        String::new()
+    };
+    let used = title.chars().count() + meta.chars().count() + duration.chars().count();
+    (title, meta, width.saturating_sub(used))
 }
 
 /// Truncates to `max` characters, adding an ellipsis when cut.
@@ -191,6 +211,32 @@ mod tests {
     use crate::ytm::ItemRef;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+
+    /// Rows always span the given width and keep a space before the duration.
+    #[test]
+    fn test_fit_row_keeps_duration_and_width() {
+        let total = |(t, m, p): &(String, String, usize), d: &str| {
+            t.chars().count() + m.chars().count() + p + d.chars().count()
+        };
+        let long = fit_row(
+            "A very long song title that does not fit",
+            "Band · Album",
+            "3:05",
+            30,
+        );
+        assert_eq!(total(&long, "3:05"), 30);
+        assert!(long.0.ends_with('…'));
+        assert!(long.1.is_empty(), "no room left for metadata");
+        assert!(long.2 >= 1);
+
+        let short = fit_row("Short", "Some Band · Some Album", "3:05", 30);
+        assert_eq!(total(&short, "3:05"), 30);
+        assert!(short.1.starts_with("   Some Band"));
+        assert!(short.2 >= 1);
+
+        let no_duration = fit_row("Title", "Band", "", 20);
+        assert_eq!(total(&no_duration, ""), 20);
+    }
 
     #[test]
     fn test_truncate() {

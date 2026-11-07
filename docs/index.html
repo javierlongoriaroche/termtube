@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TermTube – Lightweight YouTube Music client for Linux &amp; macOS terminal</title>
+<meta name="description" content="TermTube is a lightweight YouTube Music player for the terminal on Linux and macOS. Your library, likes, radio and lyrics using ~50 MB of RAM instead of 500 MB. Free and open source.">
+<meta name="keywords" content="YouTube Music lite, lightweight YouTube Music, YouTube Music client, YouTube Music Linux, YouTube Music terminal, YouTube Music CLI, TUI music player, low memory music player">
+<link rel="canonical" href="https://javierlongoriaroche.github.io/termtube/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="TermTube – Lightweight YouTube Music client for the terminal">
+<meta property="og:description" content="Your YouTube Music library, likes, radio and lyrics in the terminal, using ~50 MB of RAM. Linux AppImage and macOS.">
+<meta property="og:url" content="https://javierlongoriaroche.github.io/termtube/">
+<meta property="og:image" content="https://javierlongoriaroche.github.io/termtube/screenshot.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://javierlongoriaroche.github.io/termtube/screenshot.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "TermTube",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Linux, macOS",
+  "description": "Lightweight YouTube Music client for the terminal: Home feed, search, library, radio, likes and lyrics using about 50 MB of RAM.",
+  "url": "https://javierlongoriaroche.github.io/termtube/",
+  "downloadUrl": "https://github.com/javierlongoriaroche/termtube/releases/latest",
+  "screenshot": "https://javierlongoriaroche.github.io/termtube/screenshot.png",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {"@type": "Question", "name": "Is there a lightweight YouTube Music app for Linux?",
+     "acceptedAnswer": {"@type": "Answer", "text": "Yes. TermTube runs YouTube Music in the terminal on Linux (AppImage for x86_64 and ARM64) using about 50 MB of RAM, with your library, likes, radio and lyrics."}},
+    {"@type": "Question", "name": "Does TermTube use my YouTube Music account?",
+     "acceptedAnswer": {"@type": "Answer", "text": "Yes. It reads your session from a browser where you are signed in to music.youtube.com, so you get your playlists, liked songs and recommendations. Only youtube.com cookies are stored, on your machine."}},
+    {"@type": "Question", "name": "Do I need YouTube Music Premium?",
+     "acceptedAnswer": {"@type": "Answer", "text": "No. TermTube works with free and Premium accounts."}},
+    {"@type": "Question", "name": "Why does the YouTube Music app use so much memory?",
+     "acceptedAnswer": {"@type": "Answer", "text": "The desktop apps embed a full browser (Electron/Chromium) to run the YouTube Music web app, which needs 460 to 600 MB. TermTube talks to the YouTube Music API directly and plays audio with mpv, so it needs about a tenth of that."}}
+  ]
+}
+</script>
+<style>
+  :root {
+    --bg: #1e1f1c; --panel: #272822; --fg: #f8f8f2; --dim: #a6a69c; --accent: #66d9ef;
+    --like: #e06c75; --border: #3e3d32; --code: #2d2e27;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #fafaf7; --panel: #ffffff; --fg: #1f2328; --dim: #57606a; --accent: #0b6ab0;
+            --like: #c9354a; --border: #d8dee4; --code: #f2f2ee; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: clamp(1.9rem, 5vw, 2.8rem); line-height: 1.15; margin: 8px 0 12px; }
+  h1 span { color: var(--accent); }
+  h2 { margin-top: 48px; font-size: 1.5rem; }
+  .lead { font-size: 1.15rem; color: var(--dim); max-width: 720px; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0; }
+  .btn { display: inline-block; padding: 12px 18px; border-radius: 8px; text-decoration: none;
+         font-weight: 600; border: 1px solid var(--border); color: var(--fg); background: var(--panel); }
+  .btn.primary { background: var(--accent); color: #111; border-color: var(--accent); }
+  .demo { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); display: block; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--dim); font-weight: 600; }
+  td strong { color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card h3 { margin: 0 0 6px; font-size: 1.05rem; }
+  .card p { margin: 0; color: var(--dim); }
+  pre { background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 14px;
+        overflow-x: auto; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  details { border-bottom: 1px solid var(--border); padding: 12px 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  a { color: var(--accent); }
+  footer { margin-top: 64px; color: var(--dim); font-size: 0.9rem; }
+  .heart { color: var(--like); }
+</style>
+</head>
+<body>
+<main>
+  <p><strong>TermTube</strong> · free &amp; open source</p>
+  <h1>A lightweight <span>YouTube Music</span> client for your terminal</h1>
+  <p class="lead">Your YouTube Music library, liked songs, recommendations, radio and lyrics on Linux and macOS — using <strong>~50 MB of RAM</strong> instead of the 500 MB of the desktop app or a browser tab.</p>
+
+  <div class="buttons">
+    <a class="btn primary" href="https://github.com/javierlongoriaroche/termtube/releases/latest/download/termtube-x86_64.AppImage">⬇ Linux x86_64 (AppImage)</a>
+    <a class="btn" href="https://github.com/javierlongoriaroche/termtube/releases/latest/download/termtube-aarch64.AppImage">⬇ Linux ARM64 (AppImage)</a>
+    <a class="btn" href="https://github.com/javierlongoriaroche/termtube/releases/latest/download/termtube-macos-universal.dmg">⬇ macOS (Apple Silicon &amp; Intel)</a>
+    <a class="btn" href="https://github.com/javierlongoriaroche/termtube">★ GitHub</a>
+  </div>
+
+  <img class="demo" src="demo.gif" width="1175" height="739"
+       alt="TermTube demo: searching YouTube Music, playing a song, lyrics, the radio queue and an album page in the terminal">
+
+  <h2>YouTube Music, without the memory hog</h2>
+  <table>
+    <tr><th></th><th>YouTube Music app / browser</th><th>TermTube</th></tr>
+    <tr><td>RAM while playing</td><td>460–600 MB</td><td><strong>~50 MB</strong></td></tr>
+    <tr><td>Your library, likes &amp; recommendations</td><td>✓</td><td>✓ same account</td></tr>
+    <tr><td>Keyboard-only, works over SSH / tmux</td><td>✗</td><td>✓</td></tr>
+    <tr><td>Install</td><td>Electron app or browser</td><td>One file (AppImage) or app</td></tr>
+  </table>
+
+  <h2>Everything you use in YouTube Music</h2>
+  <div class="grid">
+    <div class="card"><h3>Home &amp; search</h3><p>Quick picks, mixes and listen again. Search songs, albums, artists and playlists.</p></div>
+    <div class="card"><h3>Your library</h3><p>Your playlists and Liked music, with a <span class="heart">♥</span> on liked songs everywhere.</p></div>
+    <div class="card"><h3>Radio</h3><p>Play any song and the queue keeps going with similar music, like “up next”.</p></div>
+    <div class="card"><h3>Likes &amp; history</h3><p>Like songs with one key; plays count in your history so recommendations keep learning.</p></div>
+    <div class="card"><h3>Lyrics &amp; queue</h3><p>Lyrics panel, reorderable queue, shuffle and repeat, seek and volume.</p></div>
+    <div class="card"><h3>Instant playback</h3><p>The next song is prepared while the current one plays. Audio by mpv, with media keys.</p></div>
+  </div>
+
+  <h2>Get started</h2>
+  <p><strong>Linux</strong> — nothing else to install:</p>
+  <pre>chmod +x termtube-x86_64.AppImage
+./termtube-x86_64.AppImage</pre>
+  <p><strong>macOS</strong> — install the audio player and open the app from the <code>.dmg</code>:</p>
+  <pre>brew install mpv yt-dlp</pre>
+  <p>On first launch TermTube finds your YouTube Music session in any installed browser (Firefox, Chrome, Chromium, Brave, Edge, Safari…). If you are not signed in, it opens music.youtube.com and waits for you. Press <code>?</code> inside the app for all keys.</p>
+
+  <h2>FAQ</h2>
+  <details><summary>Is there a lightweight YouTube Music app for Linux?</summary>
+    <p>Yes — TermTube runs in the terminal on Linux (AppImage for x86_64 and ARM64) using about 50 MB of RAM, with your library, likes, radio and lyrics.</p></details>
+  <details><summary>Does it use my YouTube Music account?</summary>
+    <p>Yes. It reads your session from a browser where you are signed in to music.youtube.com, so you get your playlists, liked songs and recommendations. Only youtube.com cookies are stored, on your machine.</p></details>
+  <details><summary>Do I need YouTube Music Premium?</summary>
+    <p>No. TermTube works with free and Premium accounts.</p></details>
+  <details><summary>Why does the YouTube Music app use so much memory?</summary>
+    <p>The desktop apps embed a full browser to run the YouTube Music web app. TermTube talks to the YouTube Music API directly and plays audio with mpv, so it needs about a tenth of the memory.</p></details>
+
+  <footer>
+    <p>TermTube is free software (MIT). Source code, issues and releases on <a href="https://github.com/javierlongoriaroche/termtube">GitHub</a>.</p>
+    <p>TermTube is an independent project, not affiliated with, endorsed or sponsored by Google or YouTube. “YouTube” and “YouTube Music” are trademarks of Google LLC, used only to describe compatibility.</p>
+  </footer>
+</main>
+</body>
+</html>
