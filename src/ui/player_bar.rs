@@ -41,7 +41,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     } else {
         "▶"
     };
-    let like = if track.liked == Some(true) {
+    let like = if app.is_liked(&track.video_id) {
         " ♥"
     } else {
         ""
@@ -64,7 +64,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         Paragraph::new(Line::from(vec![
             Span::from(format!(" {state} ")).fg(theme.primary).bold(),
             Span::from(title).fg(theme.fg).add_modifier(Modifier::BOLD),
-            Span::from(like).fg(theme.secondary),
+            Span::from(like).fg(theme.liked),
             Span::from(" ".repeat(pad)),
             Span::from(modes).fg(theme.fg_dim),
         ])),
@@ -153,7 +153,15 @@ fn draw_queue(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let items: Vec<ListItem> = tracks
         .iter()
         .enumerate()
-        .map(|(i, t)| ListItem::new(track_line(t, Some(i) == current, width, theme)))
+        .map(|(i, t)| {
+            ListItem::new(track_line(
+                t,
+                Some(i) == current,
+                app.is_liked(&t.video_id),
+                width,
+                theme,
+            ))
+        })
         .collect();
     let hint = if focused {
         " K/J move · d remove · Enter play "

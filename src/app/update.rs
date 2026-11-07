@@ -23,7 +23,7 @@ pub fn update(app: &mut App, msg: Msg) -> Vec<Effect> {
 /// Effects needed when the app starts.
 pub fn init(app: &mut App) -> Vec<Effect> {
     app.root_mut(Section::Home).loading = true;
-    vec![Effect::LoadHome { continuation: None }]
+    vec![Effect::LoadHome { continuation: None }, Effect::LoadLiked]
 }
 
 fn on_action(app: &mut App, action: Action) -> Vec<Effect> {
@@ -411,8 +411,8 @@ fn toggle_like(app: &mut App) -> Vec<Effect> {
     let Some(track) = app.now_playing().cloned() else {
         return vec![];
     };
-    let liked = !track.liked.unwrap_or(false);
-    set_liked(app, &track.video_id, Some(liked));
+    let liked = !app.is_liked(&track.video_id);
+    set_liked(app, &track.video_id, liked);
     app.set_status(if liked {
         format!("♥ Liked: {}", track.title)
     } else {
@@ -424,23 +424,19 @@ fn toggle_like(app: &mut App) -> Vec<Effect> {
     }]
 }
 
-/// Updates the like flag of a video everywhere it appears.
-fn set_liked(app: &mut App, video_id: &str, liked: Option<bool>) {
-    let mut tracks = app.queue.tracks().to_vec();
-    let mut changed = false;
-    for t in tracks.iter_mut().filter(|t| t.video_id == video_id) {
-        t.liked = liked;
-        changed = true;
+fn set_liked(app: &mut App, video_id: &str, liked: bool) {
+    if liked {
+        app.liked_ids.insert(video_id.to_string());
+    } else {
+        app.liked_ids.remove(video_id);
     }
-    if changed {
-        let current = app.queue.current_index().unwrap_or(0);
-        let repeat = app.queue.repeat();
-        let shuffled = app.queue.is_shuffled();
-        if !shuffled {
-            app.queue.set(tracks, current);
-            app.queue.set_repeat(repeat);
-        }
-    }
+}
+
+fn tracks_of(entries: &[Entry]) -> impl Iterator<Item = &Track> {
+    entries.iter().filter_map(|e| match e {
+        Entry::Track(t) => Some(t),
+        _ => None,
+    })
 }
 
 fn on_data(app: &mut App, event: DataEvent) -> Vec<Effect> {
@@ -490,6 +486,10 @@ fn on_data(app: &mut App, event: DataEvent) -> Vec<Effect> {
             vec![]
         }
         DataEvent::Collection { item, result } => {
+            if let Ok(c) = &result {
+                let tracks: Vec<Track> = tracks_of(&c.entries).cloned().collect();
+                app.merge_likes(&tracks);
+            }
             if let Some(page) = app.find_page_mut(&PageKind::Collection(item)) {
                 match result {
                     Ok(c) => {
@@ -547,8 +547,15 @@ fn on_data(app: &mut App, event: DataEvent) -> Vec<Effect> {
             result,
         } => {
             if let Err(e) = result {
-                set_liked(app, &video_id, Some(!liked));
+                set_liked(app, &video_id, !liked);
                 app.set_status(format!("Could not update like: {e}"));
+            }
+            vec![]
+        }
+        DataEvent::Liked(result) => {
+            match result {
+                Ok(tracks) => app.merge_likes(&tracks),
+                Err(e) => tracing::warn!("could not load liked songs: {e}"),
             }
             vec![]
         }
@@ -594,6 +601,9 @@ fn on_player(app: &mut App, event: PlayerEvent) -> Vec<Effect> {
         PlayerEvent::Idle(_) => {}
         PlayerEvent::FileLoaded => {
             app.player.loading = false;
+            if let Some(id) = app.now_playing().map(|t| t.video_id.clone()) {
+                app.retried.remove(&id);
+            }
             let mut effects = prefetch_next(app);
             if let Some(t) = app.now_playing() {
                 effects.push(Effect::AddHistory(t.video_id.clone()));
@@ -607,11 +617,18 @@ fn on_player(app: &mut App, event: PlayerEvent) -> Vec<Effect> {
         }
         PlayerEvent::EndFile(EndReason::Eof) => return skip(app, true),
         PlayerEvent::EndFile(EndReason::Error(e)) => {
-            let title = app
-                .now_playing()
-                .map(|t| t.title.clone())
-                .unwrap_or_default();
-            app.set_status(format!("Could not play \"{title}\": {e}"));
+            let Some(track) = app.now_playing().cloned() else {
+                return vec![];
+            };
+            if app.retried.insert(track.video_id.clone()) {
+                // Stream URLs are sometimes rejected; a fresh one usually works.
+                tracing::warn!("playback failed for {}: {e}; retrying", track.video_id);
+                app.resolver.forget(&track.video_id);
+                app.set_status(format!("Retrying \"{}\"…", track.title));
+                return play_current(app);
+            }
+            app.retried.remove(&track.video_id);
+            app.set_status(format!("Could not play \"{}\": {e}", track.title));
             return skip(app, false);
         }
         PlayerEvent::EndFile(EndReason::Stopped) => {}
@@ -685,7 +702,10 @@ mod tests {
     #[test]
     fn test_init_loads_home_and_fills_page() {
         let mut a = app();
-        assert_eq!(init(&mut a), vec![Effect::LoadHome { continuation: None }]);
+        assert_eq!(
+            init(&mut a),
+            vec![Effect::LoadHome { continuation: None }, Effect::LoadLiked]
+        );
         let home = HomePage {
             shelves: vec![Shelf {
                 title: "Picks".into(),
@@ -791,14 +811,39 @@ mod tests {
         a.resolver.store("2".into(), stream("http://2"));
         let effects = update(&mut a, Msg::Player(PlayerEvent::EndFile(EndReason::Eof)));
         assert_eq!(effects, vec![Effect::Mpv(MpvCmd::Load("http://2".into()))]);
-        update(
-            &mut a,
-            Msg::Player(PlayerEvent::EndFile(EndReason::Error("boom".into()))),
+        let fail = || Msg::Player(PlayerEvent::EndFile(EndReason::Error("boom".into())));
+        let effects = update(&mut a, fail());
+        assert_eq!(
+            effects,
+            vec![Effect::Resolve("2".into())],
+            "first failure re-resolves"
         );
-        assert_eq!(a.now_playing().unwrap().video_id, "3");
+        assert_eq!(a.now_playing().unwrap().video_id, "2");
+        assert!(a.resolver.cached("2").is_none(), "bad URL is forgotten");
+        update(&mut a, fail());
+        assert_eq!(
+            a.now_playing().unwrap().video_id,
+            "3",
+            "second failure skips"
+        );
         assert!(a.status().unwrap().contains("boom"));
         let effects = update(&mut a, Msg::Player(PlayerEvent::EndFile(EndReason::Eof)));
         assert_eq!(effects, vec![Effect::Mpv(MpvCmd::Stop)]);
+    }
+
+    #[test]
+    fn test_retry_budget_resets_after_successful_load() {
+        let mut a = app();
+        a.queue.set(vec![track("1"), track("2")], 0);
+        let fail = || Msg::Player(PlayerEvent::EndFile(EndReason::Error("403".into())));
+        update(&mut a, fail());
+        update(&mut a, Msg::Player(PlayerEvent::FileLoaded));
+        update(&mut a, fail());
+        assert_eq!(
+            a.now_playing().unwrap().video_id,
+            "1",
+            "retried again instead of skipping"
+        );
     }
 
     #[test]
@@ -904,7 +949,7 @@ mod tests {
                 liked: true
             }]
         );
-        assert_eq!(a.now_playing().unwrap().liked, Some(true));
+        assert!(a.is_liked("1"));
         data(
             &mut a,
             DataEvent::Rated {
@@ -913,7 +958,34 @@ mod tests {
                 result: Err("401".into()),
             },
         );
-        assert_eq!(a.now_playing().unwrap().liked, Some(false));
+        assert!(!a.is_liked("1"));
+    }
+
+    #[test]
+    fn test_liked_songs_and_collections_feed_the_like_set() {
+        let mut a = app();
+        let mut liked = track("x");
+        liked.liked = Some(true);
+        data(
+            &mut a,
+            DataEvent::Liked(Ok(vec![liked.clone(), track("y")])),
+        );
+        assert!(a.is_liked("x"));
+        assert!(!a.is_liked("y"), "liked: Some(false) is not added");
+        let mut unliked = liked.clone();
+        unliked.liked = Some(false);
+        data(
+            &mut a,
+            DataEvent::Collection {
+                item: album(),
+                result: Ok(Collection {
+                    title: String::new(),
+                    subtitle: String::new(),
+                    entries: vec![Entry::Track(unliked)],
+                }),
+            },
+        );
+        assert!(!a.is_liked("x"), "a fresher status from a page wins");
     }
 
     #[test]

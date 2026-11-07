@@ -82,6 +82,8 @@ pub enum DataEvent {
         video_id: String,
         result: Result<StreamUrl, String>,
     },
+    /// Songs in "Liked music", used to show the ♥ everywhere.
+    Liked(Result<Vec<Track>, String>),
 }
 
 /// Everything that can change the app state.
@@ -111,6 +113,7 @@ pub enum Effect {
     LoadHome { continuation: Option<String> },
     Search { query: String, filter: SearchFilter },
     LoadLibrary,
+    LoadLiked,
     LoadCollection(ItemRef),
     Radio { seed: String },
     Lyrics(String),

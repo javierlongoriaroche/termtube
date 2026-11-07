@@ -190,6 +190,10 @@ pub struct App {
     /// Video waiting for its stream URL before playback can start.
     pub pending_play: Option<String>,
     pub radio_loading: bool,
+    /// Videos liked in the account; source of truth for the ♥ marker.
+    pub liked_ids: HashSet<String>,
+    /// Videos already re-resolved after a playback error.
+    pub retried: HashSet<String>,
     pub meter_enabled: bool,
     pub show_help: bool,
     pub should_quit: bool,
@@ -221,6 +225,8 @@ impl App {
             resolving: HashSet::new(),
             pending_play: None,
             radio_loading: false,
+            liked_ids: HashSet::new(),
+            retried: HashSet::new(),
             meter_enabled,
             show_help: false,
             should_quit: false,
@@ -269,6 +275,25 @@ impl App {
 
     pub fn root_mut(&mut self, section: Section) -> &mut Page {
         &mut self.stacks[section.index()][0]
+    }
+
+    pub fn is_liked(&self, video_id: &str) -> bool {
+        self.liked_ids.contains(video_id)
+    }
+
+    /// Learns like status from tracks that report it.
+    pub fn merge_likes<'a>(&mut self, tracks: impl IntoIterator<Item = &'a Track>) {
+        for t in tracks {
+            match t.liked {
+                Some(true) => {
+                    self.liked_ids.insert(t.video_id.clone());
+                }
+                Some(false) => {
+                    self.liked_ids.remove(&t.video_id);
+                }
+                None => {}
+            }
+        }
     }
 
     pub fn now_playing(&self) -> Option<&Track> {

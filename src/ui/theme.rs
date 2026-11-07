@@ -15,6 +15,8 @@ pub struct Theme {
     pub border_focused: Color,
     pub progress_bar: Color,
     pub meter_colors: Vec<Color>,
+    /// Color of the ♥ marker for liked songs.
+    pub liked: Color,
 }
 
 impl Theme {
@@ -29,6 +31,7 @@ impl Theme {
             border: Color::DarkGray,
             border_focused: parse_hex_color(&settings.primary).unwrap_or(Color::LightBlue),
             progress_bar: parse_hex_color(&settings.primary).unwrap_or(Color::LightBlue),
+            liked: Color::Rgb(0xe0, 0x6c, 0x75),
             meter_colors: settings
                 .meter_colors
                 .iter()
@@ -51,6 +54,7 @@ impl Default for Theme {
             border_focused: Color::LightBlue,
             progress_bar: Color::LightBlue,
             meter_colors: vec![Color::Green, Color::Yellow, Color::Red],
+            liked: Color::Rgb(0xe0, 0x6c, 0x75),
         }
     }
 }

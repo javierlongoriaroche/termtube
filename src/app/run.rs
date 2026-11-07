@@ -153,6 +153,7 @@ impl Ctx<'_> {
                 Effect::LoadLibrary => {
                     DataEvent::Library(ytm.library_playlists().await.map_err(err))
                 }
+                Effect::LoadLiked => DataEvent::Liked(ytm.playlist("LM").await.map_err(err)),
                 Effect::LoadCollection(item) => {
                     let result = load_collection(&ytm, &item).await.map_err(err);
                     DataEvent::Collection { item, result }

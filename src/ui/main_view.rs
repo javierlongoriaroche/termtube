@@ -54,7 +54,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let items: Vec<ListItem> = page
         .entries
         .iter()
-        .map(|e| entry_item(e, playing, width, theme))
+        .map(|e| entry_item(e, app, playing, width, theme))
         .collect();
     let mut state = ListState::default().with_selected(Some(page.selected));
     let footer = if page.loading { " loading… " } else { "" };
@@ -113,6 +113,7 @@ fn draw_search_box(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 
 fn entry_item<'a>(
     entry: &'a Entry,
+    app: &App,
     playing: Option<&str>,
     width: usize,
     theme: &Theme,
@@ -124,6 +125,7 @@ fn entry_item<'a>(
         Entry::Track(t) => ListItem::new(track_line(
             t,
             playing == Some(t.video_id.as_str()),
+            app.is_liked(&t.video_id),
             width,
             theme,
         )),
@@ -135,21 +137,22 @@ fn entry_item<'a>(
     }
 }
 
-/// One song row: state icon, title, artists/album and duration aligned right.
-pub fn track_line<'a>(t: &Track, is_playing: bool, width: usize, theme: &Theme) -> Line<'a> {
-    let icon = if is_playing {
-        "▶ "
-    } else if t.liked == Some(true) {
-        "♥ "
-    } else {
-        "  "
-    };
+/// One song row: playing marker, like marker, title, artists/album and duration.
+pub fn track_line<'a>(
+    t: &Track,
+    is_playing: bool,
+    liked: bool,
+    width: usize,
+    theme: &Theme,
+) -> Line<'a> {
+    let icon = if is_playing { "▶" } else { " " };
+    let heart = if liked { "♥ " } else { "  " };
     let mut meta = t.artists.clone();
     if let Some(album) = &t.album {
         meta = format!("{meta} · {album}");
     }
     let duration = t.duration.map(format_duration).unwrap_or_default();
-    let used = 2 + t.title.chars().count() + 3 + duration.len();
+    let used = 3 + t.title.chars().count() + 3 + duration.len();
     let meta = truncate(&meta, width.saturating_sub(used));
     let pad = width.saturating_sub(used + meta.chars().count());
     let title_style = if is_playing {
@@ -159,6 +162,7 @@ pub fn track_line<'a>(t: &Track, is_playing: bool, width: usize, theme: &Theme) 
     };
     Line::from(vec![
         Span::from(icon).fg(theme.primary),
+        Span::from(heart).fg(theme.liked),
         Span::styled(t.title.clone(), title_style),
         Span::from("   "),
         Span::from(meta).fg(theme.fg_dim),
@@ -215,6 +219,7 @@ mod tests {
                 subtitle: "2001".into(),
             }),
         ]);
+        app.liked_ids.insert("v".into());
         let mut term = Terminal::new(TestBackend::new(80, 12)).unwrap();
         term.draw(|f| super::super::draw(f, &app, &Theme::default()))
             .unwrap();
@@ -227,6 +232,7 @@ mod tests {
             "Some Record",
             "1 Home",
             "Nothing playing",
+            "♥ Sample Song",
         ] {
             assert!(screen.contains(needle), "missing {needle}");
         }

@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 use tokio::process::Command;
 
 /// Stream URLs closer than this to expiring are resolved again.
 const EXPIRY_MARGIN_SECS: u64 = 300;
+/// yt-dlp runs per video before giving up when YouTube rejects the stream URL.
+const MAX_ATTEMPTS: usize = 3;
+const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Debug, Error)]
 pub enum ResolveError {
@@ -14,6 +17,8 @@ pub enum ResolveError {
     Spawn(#[from] std::io::Error),
     #[error("yt-dlp failed: {0}")]
     Failed(String),
+    #[error("YouTube rejected the audio stream (HTTP {0})")]
+    Rejected(u16),
 }
 
 /// A direct audio stream URL and when it stops being valid (unix seconds).
@@ -36,6 +41,7 @@ pub struct Resolver {
     ytdlp: String,
     cookies: PathBuf,
     cache: HashMap<String, StreamUrl>,
+    http: reqwest::Client,
 }
 
 impl Resolver {
@@ -44,6 +50,10 @@ impl Resolver {
             ytdlp,
             cookies,
             cache: HashMap::new(),
+            http: reqwest::Client::builder()
+                .timeout(PROBE_TIMEOUT)
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -56,46 +66,95 @@ impl Resolver {
         self.cache.insert(video_id, url);
     }
 
-    /// Runs yt-dlp for one video (≈5 s); independent of the cache so it can run in a task.
+    /// Drops a cached URL so the next play resolves it again.
+    pub fn forget(&mut self, video_id: &str) {
+        self.cache.remove(video_id);
+    }
+
+    /// Resolves a playable URL: runs yt-dlp (≈5 s) and checks that YouTube serves it,
+    /// retrying because some URLs are randomly rejected with HTTP 403.
     pub fn resolve_task(
         &self,
         video_id: &str,
     ) -> impl std::future::Future<Output = Result<StreamUrl, ResolveError>> {
         let ytdlp = self.ytdlp.clone();
         let cookies = self.cookies.clone();
-        let watch = format!("https://music.youtube.com/watch?v={video_id}");
+        let http = self.http.clone();
+        let video_id = video_id.to_string();
         async move {
-            let out = Command::new(ytdlp)
-                .args([
-                    "-q",
-                    "--no-warnings",
-                    "--no-playlist",
-                    "-f",
-                    "bestaudio/best",
-                    "-g",
-                    "--cookies",
-                ])
-                .arg(cookies)
-                .arg(watch)
-                .kill_on_drop(true)
-                .output()
-                .await?;
-            if !out.status.success() {
-                let err = String::from_utf8_lossy(&out.stderr);
-                return Err(ResolveError::Failed(
-                    err.lines().last().unwrap_or("unknown error").to_string(),
-                ));
+            let mut last_err = ResolveError::Failed("no attempts".into());
+            for attempt in 1..=MAX_ATTEMPTS {
+                let stream = match run_ytdlp(&ytdlp, &cookies, &video_id).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("resolve {video_id} attempt {attempt}: {e}");
+                        last_err = e;
+                        continue;
+                    }
+                };
+                match probe(&http, &stream.url).await {
+                    Ok(()) => return Ok(stream),
+                    Err(e) => {
+                        tracing::warn!("resolve {video_id} attempt {attempt}: {e}");
+                        last_err = e;
+                    }
+                }
             }
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let url = stdout
-                .lines()
-                .find(|l| l.starts_with("http"))
-                .ok_or_else(|| ResolveError::Failed("no URL in output".into()))?;
-            Ok(StreamUrl {
-                url: url.to_string(),
-                expires_at: parse_expire(url),
-            })
+            Err(last_err)
         }
+    }
+}
+
+async fn run_ytdlp(
+    ytdlp: &str,
+    cookies: &PathBuf,
+    video_id: &str,
+) -> Result<StreamUrl, ResolveError> {
+    let out = Command::new(ytdlp)
+        .args([
+            "-q",
+            "--no-warnings",
+            "--no-playlist",
+            "-f",
+            "bestaudio/best",
+            "-g",
+            "--cookies",
+        ])
+        .arg(cookies)
+        .arg(format!("https://music.youtube.com/watch?v={video_id}"))
+        .kill_on_drop(true)
+        .output()
+        .await?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(ResolveError::Failed(
+            err.lines().last().unwrap_or("unknown error").to_string(),
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let url = stdout
+        .lines()
+        .find(|l| l.starts_with("http"))
+        .ok_or_else(|| ResolveError::Failed("no URL in output".into()))?;
+    Ok(StreamUrl {
+        url: url.to_string(),
+        expires_at: parse_expire(url),
+    })
+}
+
+/// Requests the first bytes of the stream to detect URLs YouTube will refuse.
+async fn probe(http: &reqwest::Client, url: &str) -> Result<(), ResolveError> {
+    let status = http
+        .get(url)
+        .header(reqwest::header::RANGE, "bytes=0-1")
+        .send()
+        .await
+        .map_err(|e| ResolveError::Failed(format!("probe failed: {e}")))?
+        .status();
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(ResolveError::Rejected(status.as_u16()))
     }
 }
 
@@ -169,5 +228,24 @@ mod tests {
         assert_eq!(r.cached("fresh").map(|u| u.url.as_str()), Some("u1"));
         assert!(r.cached("stale").is_none());
         assert!(r.cached("missing").is_none());
+    }
+}
+
+/// Resolves `TERMTUBE_VIDEO` with real yt-dlp and network; needs `TERMTUBE_COOKIES`.
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "runs yt-dlp against YouTube"]
+    async fn live_resolve_from_env() {
+        let video = std::env::var("TERMTUBE_VIDEO").expect("TERMTUBE_VIDEO");
+        let cookies = PathBuf::from(std::env::var("TERMTUBE_COOKIES").expect("TERMTUBE_COOKIES"));
+        let r = Resolver::new("yt-dlp".into(), cookies);
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+        match r.resolve_task(&video).await {
+            Ok(stream) => println!("resolved {video}: expires {:?}", stream.expires_at),
+            Err(e) => panic!("could not resolve {video}: {e}"),
+        }
     }
 }
