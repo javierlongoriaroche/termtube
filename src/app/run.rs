@@ -23,9 +23,8 @@ pub async fn run(settings: Settings, ytm: Ytm) -> Result<(), Box<dyn std::error:
     let (data_tx, mut data_rx) = mpsc::unbounded_channel::<DataEvent>();
     let (player_tx, mut player_rx) = mpsc::unbounded_channel::<PlayerEvent>();
 
-    let socket = settings
-        .data_dir()
-        .join(format!("mpv-{}.sock", std::process::id()));
+    // Unix socket paths are limited to ~104 bytes, so keep it in the short temp dir.
+    let socket = std::env::temp_dir().join(format!("termtube-mpv-{}.sock", std::process::id()));
     let mpv = Mpv::spawn(
         &MpvConfig {
             binary: settings.mpv.path.clone(),
