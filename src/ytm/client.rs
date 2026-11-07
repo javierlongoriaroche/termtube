@@ -9,7 +9,9 @@ use ytmapi_rs::query::{GetArtistQuery, GetPlaylistTracksQuery};
 use ytmapi_rs::{Client, YtMusic, YtMusicBuilder};
 
 use super::models::{parse_duration, Account, Entry, ItemRef, Shelf, Track};
-use super::raw::{parse_accounts, parse_home, parse_playlist_page, HomePage, RawPost};
+use super::raw::{
+    parse_accounts, parse_home, parse_lyrics, parse_playlist_page, HomePage, RawPost,
+};
 
 /// Auto playlist with the songs you liked.
 const LIKED_PLAYLIST_ID: &str = "LM";
@@ -365,8 +367,21 @@ impl Ytm {
         else {
             return Ok(None);
         };
-        let lyrics = self.inner.get_lyrics(lyrics_id).await?;
-        Ok(Some(format!("{}\n\n{}", lyrics.lyrics, lyrics.source)))
+        match self.inner.get_lyrics(lyrics_id.clone()).await {
+            Ok(lyrics) => Ok(Some(format!("{}\n\n{}", lyrics.lyrics, lyrics.source))),
+            Err(e) => {
+                // The crate rejects pages it does not know, such as "Lyrics not available".
+                let json = self
+                    .inner
+                    .json_query(RawPost::browse(lyrics_id.get_raw()))
+                    .await?
+                    .into_inner();
+                match parse_lyrics(&json) {
+                    Some(result) => Ok(result),
+                    None => Err(e.into()),
+                }
+            }
+        }
     }
 
     pub async fn rate(&self, video_id: &str, liked: bool) -> Result<(), YtmError> {
@@ -472,6 +487,38 @@ mod live {
             .unwrap_or(0);
         let header = crate::config::cookies::load_header(std::path::Path::new(&path)).unwrap();
         Ytm::connect(header, authuser).await.unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore = "hits the real YouTube Music API"]
+    async fn live_lyrics_for_radio() {
+        let ytm = client().await;
+        let mut failed = 0;
+        for t in ytm.radio("9RfVp-GhKfs").await.unwrap() {
+            match ytm.lyrics(&t.video_id).await {
+                Ok(Some(_)) => {}
+                Ok(None) => println!("NONE {} {}", t.video_id, t.title),
+                Err(e) => {
+                    failed += 1;
+                    println!("FAIL {} {}: {e}", t.video_id, t.title);
+                }
+            }
+        }
+        println!("failed: {failed}");
+    }
+
+    /// Loads the playlist given in `TERMTUBE_PLAYLIST`.
+    #[tokio::test]
+    #[ignore = "hits the real YouTube Music API"]
+    async fn live_playlist_from_env() {
+        let id = std::env::var("TERMTUBE_PLAYLIST").expect("TERMTUBE_PLAYLIST");
+        let tracks = client().await.playlist(&id).await.unwrap();
+        println!(
+            "{id}: {} tracks, first = {:?}",
+            tracks.len(),
+            tracks.first().map(|t| &t.title)
+        );
+        assert!(!tracks.is_empty());
     }
 
     #[tokio::test]

@@ -276,7 +276,9 @@ impl App {
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
-        self.status = Some((msg.into(), Instant::now()));
+        let msg = msg.into();
+        tracing::info!("status: {msg}");
+        self.status = Some((msg, Instant::now()));
     }
 
     pub fn status(&self) -> Option<&str> {

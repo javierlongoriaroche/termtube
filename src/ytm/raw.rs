@@ -278,6 +278,29 @@ fn parse_playlist_row(row: &Value) -> Option<Track> {
     })
 }
 
+/// Reads a lyrics page: `Some(Some(text))` with lyrics, `Some(None)` when YouTube
+/// says there are none, `None` when the layout is unknown.
+pub fn parse_lyrics(json: &Value) -> Option<Option<String>> {
+    if json.pointer("/contents/messageRenderer").is_some() {
+        return Some(None);
+    }
+    let shelf = find_key(json, "musicDescriptionShelfRenderer")?;
+    let text = runs_text(shelf.get("description"));
+    let source = runs_text(shelf.get("footer"));
+    Some((!text.is_empty()).then(|| format!("{text}\n\n{source}").trim_end().to_string()))
+}
+
+/// Depth-first search for the first object stored under `key`.
+fn find_key<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
+    match v {
+        Value::Object(map) => map
+            .get(key)
+            .or_else(|| map.values().find_map(|c| find_key(c, key))),
+        Value::Array(items) => items.iter().find_map(|c| find_key(c, key)),
+        _ => None,
+    }
+}
+
 /// Parses the accounts list, in session order (index = `X-Goog-AuthUser`).
 pub fn parse_accounts(json: &Value) -> Vec<Account> {
     let mut out = Vec::new();
@@ -497,6 +520,21 @@ mod tests {
         let page = parse_playlist_page(&json);
         assert_eq!(page.tracks.len(), 1);
         assert_eq!(page.continuation, None);
+    }
+
+    #[test]
+    fn test_parse_lyrics_variants() {
+        let missing = json!({"contents": {"messageRenderer": {"text": {"runs": [{"text": "Lyrics not available"}]}}}});
+        assert_eq!(parse_lyrics(&missing), Some(None));
+        let nested = json!({"contents": {"sectionListRenderer": {"contents": [{"other": {}}, {"musicDescriptionShelfRenderer": {
+            "description": {"runs": [{"text": "line one\nline two"}]},
+            "footer": {"runs": [{"text": "Source: Example"}]}
+        }}]}}});
+        assert_eq!(
+            parse_lyrics(&nested),
+            Some(Some("line one\nline two\n\nSource: Example".into()))
+        );
+        assert_eq!(parse_lyrics(&json!({"contents": {}})), None);
     }
 
     #[test]
