@@ -1,0 +1,105 @@
+name: build-and-release
+
+# Pull requests: test and build every package (downloadable as workflow artifacts).
+# Tags v*: same, then publish a GitHub release with the packages attached.
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  appimage:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mpv libfuse2 file unzip cmake
+      - run: bash scripts/build-appimage.sh
+      - name: Smoke test the AppImage
+        run: |
+          cd "$(mktemp -d)"
+          "$GITHUB_WORKSPACE/dist/termtube-${{ matrix.arch }}.AppImage" --appimage-extract >/dev/null
+          ./squashfs-root/AppRun --version
+          ./squashfs-root/usr/bin/yt-dlp --version
+          ./squashfs-root/usr/bin/deno --version | head -1
+          # The bundled mpv must decode audio with its own libraries.
+          ./squashfs-root/usr/bin/mpv --no-config --ao=null --length=1 av://lavfi:sine
+      - uses: actions/upload-artifact@v4
+        with:
+          name: termtube-${{ matrix.arch }}.AppImage
+          path: dist/termtube-${{ matrix.arch }}.AppImage
+          if-no-files-found: error
+
+  macos:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Build universal binary
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p target/universal
+          lipo -create -output target/universal/termtube \
+            target/aarch64-apple-darwin/release/termtube \
+            target/x86_64-apple-darwin/release/termtube
+          lipo -info target/universal/termtube
+      - run: TERMTUBE_BIN=target/universal/termtube DMG_NAME=termtube-macos-universal.dmg bash scripts/build-macos-app.sh
+      - name: Smoke test the app bundle
+        run: dist/TermTube.app/Contents/Resources/termtube --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: termtube-macos-universal.dmg
+          path: dist/termtube-macos-universal.dmg
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [appimage, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "TermTube ${GITHUB_REF_NAME#v}" \
+            --notes-file .github/release-notes.md

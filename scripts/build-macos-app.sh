@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# Builds dist/TermTube.app (opens Terminal running termtube) and dist/TermTube.dmg.
+# Builds dist/TermTube.app (opens Terminal running termtube) and dist/$DMG_NAME.
+# Set TERMTUBE_BIN to package a prebuilt binary (e.g. a universal one) instead of building.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist"
 APP="$DIST/TermTube.app"
 VERSION="$(grep -m1 '^version' "$ROOT/Cargo.toml" | cut -d'"' -f2)"
+DMG_NAME="${DMG_NAME:-TermTube.dmg}"
 
-cargo build --release --manifest-path "$ROOT/Cargo.toml"
+if [[ -z "${TERMTUBE_BIN:-}" ]]; then
+    cargo build --release --manifest-path "$ROOT/Cargo.toml"
+    TERMTUBE_BIN="$ROOT/target/release/termtube"
+fi
 
-rm -rf "$APP" "$DIST/TermTube.dmg" "$DIST/dmg"
+rm -rf "$APP" "$DIST/$DMG_NAME" "$DIST/dmg"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$ROOT/target/release/termtube" "$APP/Contents/Resources/termtube"
+cp "$TERMTUBE_BIN" "$APP/Contents/Resources/termtube"
 
 # Launcher: opens a Terminal window running the bundled binary, then exits.
 cat > "$APP/Contents/MacOS/TermTube" <<'LAUNCHER'
@@ -60,7 +65,7 @@ rm -rf "$ICONSET"
 mkdir -p "$DIST/dmg"
 cp -R "$APP" "$DIST/dmg/"
 ln -s /Applications "$DIST/dmg/Applications"
-hdiutil create -quiet -volname "TermTube $VERSION" -srcfolder "$DIST/dmg" -ov -format UDZO "$DIST/TermTube.dmg"
+hdiutil create -quiet -volname "TermTube $VERSION" -srcfolder "$DIST/dmg" -ov -format UDZO "$DIST/$DMG_NAME"
 rm -rf "$DIST/dmg"
 
-echo "Built $APP and $DIST/TermTube.dmg"
+echo "Built $APP and $DIST/$DMG_NAME"
