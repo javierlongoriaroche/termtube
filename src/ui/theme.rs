@@ -7,7 +7,6 @@ use crate::config::settings::ThemeSettings;
 pub struct Theme {
     pub primary: Color,
     pub secondary: Color,
-    pub bg: Color,
     pub fg: Color,
     pub fg_dim: Color,
     pub highlight_bg: Color,
@@ -15,7 +14,9 @@ pub struct Theme {
     pub border: Color,
     pub border_focused: Color,
     pub progress_bar: Color,
-    pub visualizer_colors: Vec<Color>,
+    pub meter_colors: Vec<Color>,
+    /// Color of the ♥ marker for liked songs.
+    pub liked: Color,
 }
 
 impl Theme {
@@ -23,7 +24,6 @@ impl Theme {
         Self {
             primary: parse_hex_color(&settings.primary).unwrap_or(Color::LightBlue),
             secondary: parse_hex_color(&settings.secondary).unwrap_or(Color::Magenta),
-            bg: Color::Reset,
             fg: Color::White,
             fg_dim: Color::DarkGray,
             highlight_bg: parse_hex_color(&settings.primary).unwrap_or(Color::LightBlue),
@@ -31,8 +31,9 @@ impl Theme {
             border: Color::DarkGray,
             border_focused: parse_hex_color(&settings.primary).unwrap_or(Color::LightBlue),
             progress_bar: parse_hex_color(&settings.primary).unwrap_or(Color::LightBlue),
-            visualizer_colors: settings
-                .visualizer_colors
+            liked: Color::Rgb(0xe0, 0x6c, 0x75),
+            meter_colors: settings
+                .meter_colors
                 .iter()
                 .filter_map(|c| parse_hex_color(c))
                 .collect(),
@@ -45,7 +46,6 @@ impl Default for Theme {
         Self {
             primary: Color::LightBlue,
             secondary: Color::Magenta,
-            bg: Color::Reset,
             fg: Color::White,
             fg_dim: Color::DarkGray,
             highlight_bg: Color::LightBlue,
@@ -53,7 +53,8 @@ impl Default for Theme {
             border: Color::DarkGray,
             border_focused: Color::LightBlue,
             progress_bar: Color::LightBlue,
-            visualizer_colors: vec![Color::Green, Color::Yellow, Color::Red],
+            meter_colors: vec![Color::Green, Color::Yellow, Color::Red],
+            liked: Color::Rgb(0xe0, 0x6c, 0x75),
         }
     }
 }
@@ -91,6 +92,6 @@ mod tests {
     fn test_theme_from_settings() {
         let settings = ThemeSettings::default();
         let theme = Theme::from_settings(&settings);
-        assert_eq!(theme.visualizer_colors.len(), 3);
+        assert_eq!(theme.meter_colors.len(), 3);
     }
 }
