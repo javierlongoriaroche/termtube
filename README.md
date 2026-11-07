@@ -27,6 +27,13 @@ brew install rustup && rustup default stable   # to build
 
 ## Install
 
+Download the latest [release](https://github.com/javierlongoriaroche/termtube/releases/latest):
+
+- **Linux**: `termtube-x86_64.AppImage` or `termtube-aarch64.AppImage` — self-contained (mpv, yt-dlp and deno included). `chmod +x` and run.
+- **macOS**: `termtube-macos-universal.dmg` (Apple Silicon and Intel) — needs `brew install mpv yt-dlp`.
+
+Or build from source:
+
 ```bash
 cargo install --path .
 ```
@@ -74,6 +81,10 @@ termtube
 ## Configuration
 
 `~/.config/termtube/config.toml` — see [`config/default.toml`](config/default.toml). Logs go to `~/.termtube/termtube.log` (`RUST_LOG=termtube=debug` for more detail).
+
+## Releasing
+
+Pushing a tag like `v0.2.0` runs `.github/workflows/release.yml`, which tests the code, builds both AppImages (`scripts/build-appimage.sh` on native x86_64 and ARM64 runners) and the universal macOS `.dmg` (`scripts/build-macos-app.sh`), and publishes them in a GitHub release. Pull requests run the same builds without publishing.
 
 ## Development
 

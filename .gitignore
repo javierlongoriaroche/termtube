@@ -2,7 +2,7 @@
 
 *cookies.txt
 playlist.txt
-.github
+.github/skills
 *.AppImage
 *.deb
 packaging
