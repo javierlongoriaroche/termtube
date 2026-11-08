@@ -121,7 +121,9 @@ chmod 755 "$LINUXDEPLOY"
 echo "Packaging AppImage…"
 (
     cd "$WORK"
-    LDAI_OUTPUT="$OUTPUT" "$LINUXDEPLOY" --appimage-extract-and-run \
+    # appimagetool's AppStream check fetches every URL and fails on transient HTTP
+    # errors; the metadata is validated offline in CI with appstreamcli instead.
+    LDAI_NO_APPSTREAM=1 LDAI_OUTPUT="$OUTPUT" "$LINUXDEPLOY" --appimage-extract-and-run \
         --appdir "$APPDIR" \
         --executable "$APPDIR/usr/bin/termtube" \
         --executable "$APPDIR/usr/bin/mpv" \
