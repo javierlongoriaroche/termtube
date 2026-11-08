@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${1:?usage: $0 <version>}"
 URL="https://github.com/javierlongoriaroche/termtube/archive/refs/tags/v$VERSION.tar.gz"
 
-SHA="$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)"
+SHA="$(curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 "$URL" | shasum -a 256 | cut -d' ' -f1)"
 echo "v$VERSION source tarball sha256: $SHA"
 
 sed -i.bak -E \

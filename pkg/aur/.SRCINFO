@@ -1,6 +1,6 @@
 pkgbase = termtube
 	pkgdesc = Lightweight YouTube Music client for the terminal
-	pkgver = 0.2.2
+	pkgver = 0.2.3
 	pkgrel = 1
 	url = https://javierlongoriaroche.github.io/termtube/
 	arch = x86_64
@@ -12,7 +12,7 @@ pkgbase = termtube
 	depends = deno
 	depends = gcc-libs
 	depends = glibc
-	source = termtube-0.2.2.tar.gz::https://github.com/javierlongoriaroche/termtube/archive/refs/tags/v0.2.2.tar.gz
-	sha256sums = 8b2df2f77a670eae993a031a91eec03c46ec8b541fea7112a983262bcda4b829
+	source = termtube-0.2.3.tar.gz::https://github.com/javierlongoriaroche/termtube/archive/refs/tags/v0.2.3.tar.gz
+	sha256sums = 348d8615416471ee33b887ac612446b1ecbc92b1f680e03d062c059a5a099242
 
 pkgname = termtube
