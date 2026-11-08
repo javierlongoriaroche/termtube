@@ -1,6 +1,6 @@
 [package]
 name = "termtube"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 description = "Lightweight YouTube Music client for the terminal: home, search, library, radio, likes and lyrics in ~50 MB of RAM"
 license = "MIT"

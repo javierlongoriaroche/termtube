@@ -160,8 +160,14 @@ async fn find_session(
         return Err(LoginError::NoSession(labels));
     }
 
-    println!("\nNo session found. Opening {SIGN_IN_URL} — sign in there with the account you want to use.");
-    open_url(SIGN_IN_URL);
+    println!("\nNo YouTube Music session found. Sign in at {SIGN_IN_URL} with the account you want to use.");
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        print!("Press Enter to open it in your browser… ");
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line)?;
+        open_url(SIGN_IN_URL);
+    }
     println!(
         "Waiting for the sign-in (up to {} min, Ctrl-C to cancel)…",
         SIGN_IN_TIMEOUT.as_secs() / 60
