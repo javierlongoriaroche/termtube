@@ -45,6 +45,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mpv libfuse2 file unzip cmake
       - run: bash scripts/build-appimage.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Smoke test the AppImage
         run: |
           cd "$(mktemp -d)"
