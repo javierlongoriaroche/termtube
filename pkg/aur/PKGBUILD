@@ -1,6 +1,6 @@
 # Maintainer: javierlongoriaroche <https://github.com/javierlongoriaroche>
 pkgname=termtube
-pkgver=0.2.3
+pkgver=0.2.4
 pkgrel=1
 pkgdesc="Lightweight YouTube Music client for the terminal"
 arch=('x86_64' 'aarch64')
@@ -9,7 +9,7 @@ license=('MIT')
 depends=('mpv' 'yt-dlp' 'deno' 'gcc-libs' 'glibc')
 makedepends=('cargo')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/javierlongoriaroche/termtube/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('348d8615416471ee33b887ac612446b1ecbc92b1f680e03d062c059a5a099242')
+sha256sums=('ffd45a23ff51481aaf6a9c6caddccf1fe0f2af7f97e9cbdaca6076ee3a84b1d8')
 
 prepare() {
   cd "$pkgname-$pkgver"
