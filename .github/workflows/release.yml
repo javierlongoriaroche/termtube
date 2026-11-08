@@ -43,7 +43,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mpv libfuse2 file unzip cmake
+          sudo apt-get install -y --no-install-recommends mpv libfuse2 file unzip cmake appstream desktop-file-utils
       - run: bash scripts/build-appimage.sh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,6 +52,9 @@ jobs:
           cd "$(mktemp -d)"
           "$GITHUB_WORKSPACE/dist/termtube-${{ matrix.arch }}.AppImage" --appimage-extract >/dev/null
           ./squashfs-root/AppRun --version
+          # Same metadata checks as the AppImageHub catalog.
+          desktop-file-validate squashfs-root/*.desktop
+          appstreamcli validate --no-net squashfs-root/usr/share/metainfo/*.xml
           ./squashfs-root/usr/bin/yt-dlp --version
           ./squashfs-root/usr/bin/deno --version | head -1
           # The bundled mpv must decode audio with its own libraries.

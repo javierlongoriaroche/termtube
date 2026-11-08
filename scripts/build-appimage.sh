@@ -102,13 +102,14 @@ cat > "$APPDIR/usr/share/metainfo/$APP_ID.appdata.xml" <<EOF
   <url type="bugtracker">https://github.com/javierlongoriaroche/termtube/issues</url>
   <screenshots>
     <screenshot type="default">
+      <caption>Playing an album, with the queue and the level meter</caption>
       <image>https://javierlongoriaroche.github.io/termtube/screenshot.png</image>
     </screenshot>
   </screenshots>
   <provides><binary>termtube</binary></provides>
   <categories><category>Audio</category><category>Player</category></categories>
   <content_rating type="oars-1.1"/>
-  <releases><release version="$VERSION"/></releases>
+  <releases><release version="$VERSION" date="$(date -u +%F)"/></releases>
 </component>
 EOF
 
