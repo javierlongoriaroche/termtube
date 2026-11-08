@@ -19,6 +19,27 @@ OUTPUT="$DIST/termtube-$ARCH.AppImage"
 
 command -v mpv >/dev/null || { echo "mpv must be installed on the build host" >&2; exit 1; }
 
+# Downloads a GitHub release asset. With GH_TOKEN set (CI) it uses the authenticated
+# API through `gh`, which avoids the timeouts GitHub applies to anonymous downloads.
+# Usage: fetch_asset <owner/repo> <tag|latest> <asset name> <output file>
+fetch_asset() {
+    local repo="$1" tag="$2" asset="$3" out="$4" dir
+    if [[ -n "${GH_TOKEN:-}" ]] && command -v gh >/dev/null; then
+        dir="$(mktemp -d)"
+        if [[ "$tag" == latest ]]; then
+            gh release download --repo "$repo" --pattern "$asset" --dir "$dir"
+        else
+            gh release download "$tag" --repo "$repo" --pattern "$asset" --dir "$dir"
+        fi
+        mv "$dir/$asset" "$out"
+        rmdir "$dir"
+    else
+        local url="https://github.com/$repo/releases/download/$tag/$asset"
+        [[ "$tag" == latest ]] && url="https://github.com/$repo/releases/latest/download/$asset"
+        curl -fsSL --retry 8 --retry-all-errors --retry-delay 5 -o "$out" "$url"
+    fi
+}
+
 if [[ -z "${TERMTUBE_BIN:-}" ]]; then
     cargo build --release --manifest-path "$ROOT/Cargo.toml"
     TERMTUBE_BIN="$ROOT/target/release/termtube"
@@ -33,11 +54,11 @@ install -m 755 "$TERMTUBE_BIN" "$APPDIR/usr/bin/termtube"
 install -m 755 "$(command -v mpv)" "$APPDIR/usr/bin/mpv"
 
 echo "Downloading yt-dlp ($YTDLP_ASSET)…"
-curl -fsSL --retry 5 -o "$APPDIR/usr/bin/yt-dlp" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$YTDLP_ASSET"
+fetch_asset yt-dlp/yt-dlp latest "$YTDLP_ASSET" "$APPDIR/usr/bin/yt-dlp"
 chmod 755 "$APPDIR/usr/bin/yt-dlp"
 
 echo "Downloading deno…"
-curl -fsSL --retry 5 -o "$WORK/deno.zip" "https://github.com/denoland/deno/releases/latest/download/deno-$ARCH-unknown-linux-gnu.zip"
+fetch_asset denoland/deno latest "deno-$ARCH-unknown-linux-gnu.zip" "$WORK/deno.zip"
 unzip -q -o "$WORK/deno.zip" -d "$APPDIR/usr/bin"
 chmod 755 "$APPDIR/usr/bin/deno"
 
@@ -93,7 +114,7 @@ EOF
 
 echo "Downloading linuxdeploy…"
 LINUXDEPLOY="$WORK/linuxdeploy-$ARCH.AppImage"
-curl -fsSL --retry 5 -o "$LINUXDEPLOY" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$ARCH.AppImage"
+fetch_asset linuxdeploy/linuxdeploy continuous "linuxdeploy-$ARCH.AppImage" "$LINUXDEPLOY"
 chmod 755 "$LINUXDEPLOY"
 
 echo "Packaging AppImage…"
