@@ -5,8 +5,8 @@
 class Termtube < Formula
   desc "Lightweight YouTube Music client for the terminal"
   homepage "https://javierlongoriaroche.github.io/termtube/"
-  url "https://github.com/javierlongoriaroche/termtube/archive/refs/tags/v0.2.3.tar.gz"
-  sha256 "348d8615416471ee33b887ac612446b1ecbc92b1f680e03d062c059a5a099242"
+  url "https://github.com/javierlongoriaroche/termtube/archive/refs/tags/v0.2.4.tar.gz"
+  sha256 "ffd45a23ff51481aaf6a9c6caddccf1fe0f2af7f97e9cbdaca6076ee3a84b1d8"
   license "MIT"
   head "https://github.com/javierlongoriaroche/termtube.git", branch: "master"
 
